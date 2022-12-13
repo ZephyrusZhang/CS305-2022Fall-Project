@@ -1,5 +1,7 @@
 import struct
 
+from config import *
+
 
 class P2pPacket:
     """
@@ -45,9 +47,12 @@ class P2pPacket:
 
     _PACKET_FORMAT = '!HBBHHII'
 
+    _MAGIC = 52305
+    _TEAM = 35
+
     def __init__(self):
-        self.magic = 52305
-        self.team = 77
+        self.magic = P2pPacket._MAGIC
+        self.team = P2pPacket._TEAM
         self.type = -1
         self.hlen = struct.calcsize(self._PACKET_FORMAT)
         self.plen = 0
@@ -71,3 +76,97 @@ class P2pPacket:
     def parse_packet(self, packet: bytes):
         header, self.payload = packet[:16], packet[16:]
         self.magic, self.team, self.type, self.hlen, self.plen, self.seq, self.ack = struct.unpack(self._PACKET_FORMAT, header)
+
+    @staticmethod
+    def whohas(chunkhash):
+        """
+            Generate WHOHAS packet
+
+            Parameters
+            ----------
+            chunkhash : bytes
+                The chunkhash of the chunk peer wants.
+        """
+        return struct.pack(P2pPacket._PACKET_FORMAT,
+                           P2pPacket._MAGIC,
+                           P2pPacket._TEAM,
+                           WHOHAS,
+                           HEADER_LEN,
+                           HEADER_LEN + len(chunkhash),
+                           0, 0) + chunkhash
+
+    @staticmethod
+    def ihave(chunkhash):
+        """
+            Generate IHAVE packet
+
+            Parameters
+            ----------
+            chunkhash : bytes
+                The requested chunk that peer has.
+        """
+        return struct.pack(P2pPacket._PACKET_FORMAT,
+                           P2pPacket._MAGIC,
+                           P2pPacket._TEAM,
+                           IHAVE,
+                           HEADER_LEN,
+                           HEADER_LEN + len(chunkhash),
+                           0, 0) + chunkhash
+
+    @staticmethod
+    def get(chunkhash):
+        """
+            Generate GET packet
+
+            Parameters
+            ----------
+            chunkhash : bytes
+                The chunk peer wants to download.
+        """
+        return struct.pack(P2pPacket._PACKET_FORMAT,
+                           P2pPacket._MAGIC,
+                           P2pPacket._TEAM,
+                           GET,
+                           HEADER_LEN,
+                           HEADER_LEN + len(chunkhash),
+                           0, 0) + chunkhash
+
+    @staticmethod
+    def data(chunkdata, seq: int):
+        """
+            Generate DATA packet
+
+            Parameters
+            ----------
+            chunkdata : bytes
+                The chunkdata peer needs to send
+            seq : int
+                Sequence number of packet to be sent
+        """
+        return struct.pack(P2pPacket._PACKET_FORMAT,
+                           P2pPacket._MAGIC,
+                           P2pPacket._TEAM,
+                           DATA,
+                           HEADER_LEN,
+                           HEADER_LEN + len(chunkdata),
+                           seq,
+                           0) + chunkdata
+
+    @staticmethod
+    def ack(ack: int):
+        """
+            Generate ACK packet
+
+            Parameters
+            ----------
+            ack : int
+                The packet peer has received
+        """
+        return struct.pack(P2pPacket._PACKET_FORMAT,
+                           P2pPacket._MAGIC,
+                           P2pPacket._TEAM,
+                           ACK,
+                           HEADER_LEN,
+                           HEADER_LEN,
+                           0,
+                           ack)

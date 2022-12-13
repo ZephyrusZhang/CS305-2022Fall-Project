@@ -1,5 +1,10 @@
+import logging
 import sys
 import os
+
+from formatter import CustomFormatter
+from packet import P2pPacket
+from config import *
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
@@ -15,55 +20,21 @@ This is CS305 project skeleton code.
 Please refer to the example files - example/dumpreceiver.py and example/dumpsender.py - to learn how to play with this skeleton.
 """
 
-
-class Peer:
-    """
-        Attributes
-        ----------
-        ip : str
-            IPv4 address of current peer.
-        port : int
-            Port number of current peer.
-    """
-
-    # noinspection PyShadowingNames
-    def __init__(self, config: bt_utils.BtConfig):
-        self.ip = config.ip
-        self.port = config.port
-        self.sock = simsocket.SimSocket(config.identity, (self.ip, self.port), verbose=config.verbose)
-
-    def serve(self):
-        try:
-            while True:
-                rlist, wlist, xlit = select.select([self.sock, sys.stdin], [], [], 0.1)
-                if len(rlist) > 0:
-                    if self.sock in rlist:
-                        # TODO:
-                        pass
-                    if sys.stdin in rlist:
-                        # TODO:
-                        pass
-                else:
-                    pass
-        except KeyboardInterrupt:
-            pass
-        finally:
-            self.sock.close()
-
-    def process_download(self, chunkfile, outputfile):
-        pass
-
-
-BUF_SIZE = 1400
-CHUNK_DATA_SIZE = 512 * 1024
-MAX_PAYLOAD = 1024
-HEADER_LEN = struct.calcsize("HBBHHII")
-
 config = None
-ex_sending_chunkhash = ""
-ex_output_file = None
+ex_sending_chunkhash: str = ''
+ex_output_file: str = ''
 ex_received_chunk = dict()
-ex_downloading_chunkhash = ""
+ex_downloading_chunkhash: str = ''
+
+# Set logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+ch.setFormatter(CustomFormatter())
+logger.addHandler(ch)
+
+# TODO: 通过维护session list来和不同peer通信
 
 
 def process_download(sock, chunkfile, outputfile):
@@ -86,9 +57,7 @@ def process_download(sock, chunkfile, outputfile):
         datahash = bytes.fromhex(datahash_str)
         download_hash = download_hash + datahash
 
-    whohas_header = struct.pack("HBBHHII", socket.htons(52305), 35, 0, socket.htons(HEADER_LEN),
-                                socket.htons(HEADER_LEN + len(download_hash)), socket.htonl(0), socket.htonl(0))
-    whohas_pkt = whohas_header + download_hash
+    whohas_pkt = P2pPacket.whohas(download_hash)
 
     # Step3: flooding whohas to all peers in peer list
     peer_list = config.peers
@@ -102,9 +71,9 @@ def process_inbound_udp(sock):
     global config, ex_sending_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
-    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
+    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
     data = pkt[HEADER_LEN:]
-    if Type == 0:
+    if Type == WHOHAS:
         # received an WHOHAS pkt
         # see what chunk the sender has
         whohas_chunk_hash = data[:20]
@@ -112,39 +81,32 @@ def process_inbound_udp(sock):
         chunkhash_str = bytes.hex(whohas_chunk_hash)
         ex_sending_chunkhash = chunkhash_str
 
-        print(f"whohas: {chunkhash_str}, has: {list(config.haschunks.keys())}")
+        logger.info(f'Receive: WHOHAS {chunkhash_str}. Has {list(config.haschunks.keys())}')
         if chunkhash_str in config.haschunks:
             # send back IHAVE pkt
-            ihave_header = struct.pack("HBBHHII", socket.htons(52305), 35, 1, socket.htons(HEADER_LEN),
-                                       socket.htons(HEADER_LEN + len(whohas_chunk_hash)), socket.htonl(0),
-                                       socket.htonl(0))
-            ihave_pkt = ihave_header + whohas_chunk_hash
+            ihave_pkt = P2pPacket.ihave(whohas_chunk_hash)
             sock.sendto(ihave_pkt, from_addr)
-    elif Type == 1:
+    elif Type == IHAVE:
         # received an IHAVE pkt
         # see what chunk the sender has
         get_chunk_hash = data[:20]
 
         # send back GET pkt
-        get_header = struct.pack("HBBHHII", socket.htons(52305), 35, 2, socket.htons(HEADER_LEN),
-                                 socket.htons(HEADER_LEN + len(get_chunk_hash)), socket.htonl(0), socket.htonl(0))
-        get_pkt = get_header + get_chunk_hash
+        get_pkt = P2pPacket.get(get_chunk_hash)
         sock.sendto(get_pkt, from_addr)
-    elif Type == 2:
+    elif Type == GET:
         # received a GET pkt
         chunk_data = config.haschunks[ex_sending_chunkhash][:MAX_PAYLOAD]
 
         # send back DATA
-        data_header = struct.pack("HBBHHII", socket.htons(52305), 35, 3, socket.htons(HEADER_LEN),
-                                  socket.htons(HEADER_LEN), socket.htonl(1), 0)
-        sock.sendto(data_header + chunk_data, from_addr)
-    elif Type == 3:
+        data_pkt = P2pPacket.data(chunk_data, 1)
+        sock.sendto(data_pkt, from_addr)
+    elif Type == DATA:
         # received a DATA pkt
         ex_received_chunk[ex_downloading_chunkhash] += data
 
         # send back ACK
-        ack_pkt = struct.pack("HBBHHII", socket.htons(52305), 35, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
-                              0, Seq)
+        ack_pkt = P2pPacket.ack(Seq)
         sock.sendto(ack_pkt, from_addr)
 
         # see if finished
@@ -158,34 +120,33 @@ def process_inbound_udp(sock):
             config.haschunks[ex_downloading_chunkhash] = ex_received_chunk[ex_downloading_chunkhash]
 
             # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
-            print(f"GOT {ex_output_file}")
+            logger.info(f'GOT {ex_output_file}')
 
             # The following things are just for illustration, you do not need to print out in your design.
             sha1 = hashlib.sha1()
             sha1.update(ex_received_chunk[ex_downloading_chunkhash])
             received_chunkhash_str = sha1.hexdigest()
-            print(f"Expected chunkhash: {ex_downloading_chunkhash}")
-            print(f"Received chunkhash: {received_chunkhash_str}")
+            logger.info(f'Expected chunkhash: {ex_downloading_chunkhash}')
+            logger.info(f'Received chunkhash: {received_chunkhash_str}')
             success = ex_downloading_chunkhash == received_chunkhash_str
-            print(f"Successful received: {success}")
+            logger.info(f'Successful received: {success}')
             if success:
-                print("Congrats! You have completed the example!")
+                logger.info('Congrats! You have completed the example!')
             else:
-                print("Example fails. Please check the example files carefully.")
-    elif Type == 4:
+                logger.warning('Example fails. Please check the example files carefully.')
+    elif Type == ACK:
         ack_num = socket.ntohl(Ack)
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
-            print(f"finished sending {ex_sending_chunkhash}")
+            logger.info(f'Finished sending {ex_sending_chunkhash}')
             pass
         else:
             left = ack_num * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
             next_data = config.haschunks[ex_sending_chunkhash][left: right]
             # send next data
-            data_header = struct.pack("HBBHHII", socket.htons(52305), 35, 3, socket.htons(HEADER_LEN),
-                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
-            sock.sendto(data_header + next_data, from_addr)
+            data_pkt = P2pPacket.data(next_data, ack_num + 1)
+            sock.sendto(data_pkt, from_addr)
 
 
 def process_user_input(sock):
@@ -239,4 +200,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     config = bt_utils.BtConfig(args)
+    logger.name = f'PEER{config.identity}_LOGGER'
     peer_run(config)
