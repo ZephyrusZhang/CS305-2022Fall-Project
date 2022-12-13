@@ -2,6 +2,7 @@ import sys
 import os
 import pickle
 
+
 class BtConfig:
     def __init__(self, args):
         self.output_file = 'output.dat'
@@ -35,8 +36,7 @@ class BtConfig:
                 if line[0] == '#': 
                     continue
                 line = line.strip(os.linesep)
-                self.peers.append(line.split(' ')) # nodeid, hostname, port
-
+                self.peers.append(line.split(' '))  # nodeid, hostname, port
 
     def bt_parse_haschunk_list(self):
         with open(self.has_chunk_file, 'rb') as file:

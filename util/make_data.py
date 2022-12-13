@@ -8,10 +8,12 @@ import sys
 BT_CHUNK_SIZE = 512*1024  # 512K
 SHA1_HASH_SIZE = 20
 
+
 def chunk_hash(chunk_btyes):
     sha1_hash = hashlib.sha1()
     sha1_hash.update(chunk_btyes)
     return sha1_hash.hexdigest()
+
 
 def parse_file(file_dir, chunk_num):
     file_size = os.path.getsize(file_dir)
@@ -35,12 +37,14 @@ def parse_file(file_dir, chunk_num):
 
     return data_chunk, data_hash
 
+
 def make_data(input_file, output_file, chunk_num, my_index):
     data_chunk, data_hash = parse_file(input_file, chunk_num)
     my_data = dict(zip([data_hash[i-1] for i in my_index], [data_chunk[i-1] for i in my_index]))
     with open(output_file, "wb") as wf:
         pickle.dump(my_data, wf)
     print([data_hash[i-1] for i in my_index])
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

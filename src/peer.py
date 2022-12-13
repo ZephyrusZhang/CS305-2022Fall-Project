@@ -18,26 +18,29 @@ Please refer to the example files - example/dumpreceiver.py and example/dumpsend
 BUF_SIZE = 1400
 HEADER_LEN = struct.calcsize("HBBHHII")
 
-def process_download(sock,chunkfile, outputfile):
-    '''
+
+def process_download(sock, chunkfile, outputfile):
+    """
     if DOWNLOAD is used, the peer will keep getting files until it is done
-    '''
+    """
     print('PROCESS DOWNLOAD SKELETON CODE CALLED.  Fill me in!')
 
 
 def process_inbound_udp(sock):
     # Receive pkt
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
-    Magic, Team, Type,hlen, plen, Seq, Ack= struct.unpack("HBBHHII", pkt[:HEADER_LEN])
+    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
     data = pkt[HEADER_LEN:]
     print("SKELETON CODE CALLED, FILL this!")
+
 
 def process_user_input(sock):
     command, chunkf, outf = input().split(' ')
     if command == 'DOWNLOAD':
-        process_download(sock ,chunkf, outf)
+        process_download(sock, chunkf, outf)
     else:
         pass
+
 
 def peer_run(config):
     addr = (config.ip, config.port)
@@ -45,7 +48,7 @@ def peer_run(config):
 
     try:
         while True:
-            ready = select.select([sock, sys.stdin],[],[], 0.1)
+            ready = select.select([sock, sys.stdin], [], [], 0.1)
             read_ready = ready[0]
             if len(read_ready) > 0:
                 if sock in read_ready:
@@ -53,7 +56,7 @@ def peer_run(config):
                 if sys.stdin in read_ready:
                     process_user_input(sock)
             else:
-                # No pkt nor input arrives during this period 
+                # No pkt nor input arrives during this period
                 pass
     except KeyboardInterrupt:
         pass
