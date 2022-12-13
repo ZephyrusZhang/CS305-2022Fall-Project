@@ -2,8 +2,41 @@ import sys
 import os
 import pickle
 
+from typing import List, Tuple, Dict
+
 
 class BtConfig:
+    """
+
+
+        Attributes
+        ----------
+        output_file : str
+            (Not used)
+        peer_list_file : str
+            File name of peer list (including this peer).
+        has_chunk_file : str
+            File name of serialized chunk dictionary.
+        max_conn : int
+            Maximum concurrently connections.
+        identity : int
+            This peer's ID.
+        peers : List[Tuple[str, str, str]]
+            List of tuple (ID, hostname, port). Peer list.
+        haschunks : Dict[str, bytes]
+            Chunks data (hash -> data).
+        verbose : int
+            Verbosity.
+        timeout : int
+            Timeout value, default 0.
+            If 0, you should estimate timeout value using estimated RTT.
+            If not 0, you should always use the set value.
+        ip : str
+            This peer's IP
+        port : int
+            This peer's port
+    """
+
     def __init__(self, args):
         self.output_file = 'output.dat'
         self.peer_list_file = args.p
