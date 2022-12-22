@@ -3,11 +3,6 @@ Clear socket address usage
 kill -9 $(lsof -i:12345|awk '{print $2}'|tail -n 1)
 kill -9 $(lsof -i:48001|awk '{print $2}'|tail -n 1)
 kill -9 $(lsof -i:48002|awk '{print $2}'|tail -n 1)
-clear
-```
-
-create file
-```bash
 cd ..
 python3 util/make_data.py example/ex_file.tar ./example/data1.fragment 4 1
 python3 util/make_data.py example/ex_file.tar ./example/data2.fragment 4 2
