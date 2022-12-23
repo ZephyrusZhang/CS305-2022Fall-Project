@@ -1,15 +1,16 @@
 import logging
-import sys
 import os
+import re
+import sys
 
+from config import *
 from formatter import CustomFormatter
 from packet import P2pPacket
-from config import *
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
 import struct
-import socket
 import util.bt_utils as bt_utils
 import hashlib
 import argparse
@@ -34,7 +35,12 @@ ch.setLevel(logging.DEBUG)
 ch.setFormatter(CustomFormatter())
 logger.addHandler(ch)
 
+# types
+types = ['WHOHAS', 'IHAVE', 'GET', 'DATA', 'ACK', 'DENIED']
+
 # TODO: 通过维护session list来和不同peer通信
+# session list 里面存的是可以建立握手的socket
+session_list = []
 
 
 def process_download(sock, chunkfile, outputfile):
@@ -47,23 +53,26 @@ def process_download(sock, chunkfile, outputfile):
 
     ex_output_file = outputfile
     # Step 1: read chunkhash to be downloaded from chunkfile
-    download_hash = bytes()
+    download_hashes = bytes()
     with open(chunkfile, 'r') as cf:
-        index, datahash_str = cf.readline().strip().split(" ")
-        ex_received_chunk[datahash_str] = bytes()
-        ex_downloading_chunkhash = datahash_str
-
-        # hex_str to bytes
-        datahash = bytes.fromhex(datahash_str)
-        download_hash = download_hash + datahash
-
-    whohas_pkt = P2pPacket.whohas(download_hash)
-
-    # Step3: flooding whohas to all peers in peer list
-    peer_list = config.peers
-    for p in peer_list:
-        if int(p[0]) != config.identity:
-            sock.sendto(whohas_pkt, (p[1], int(p[2])))
+        for line in cf:
+            index, datahash_str = line.strip().split(" ")
+            download_hashes += bytes.fromhex(datahash_str)
+            # 本地存档先置空
+            ex_downloading_chunkhash = datahash_str
+            ex_received_chunk[ex_downloading_chunkhash] = bytes()
+    # Step 2: create whohas pkt
+    whohas_pkt = P2pPacket.whohas(download_hashes)
+    # 按照长度为20分割开，方便展示log
+    download_list = re.findall('.{40}', bytes.hex(download_hashes))
+    # Step 3: send to every peer
+    for peer in config.peers:
+        id = int(peer[0])
+        ip = peer[1]
+        port = int(peer[2])
+        if id != config.identity:
+            logger.info(f'发({ip}, {port}) *WHOHAS* for {download_list}')
+            sock.sendto(whohas_pkt, (ip, port))
 
 
 def process_inbound_udp(sock):
@@ -76,37 +85,44 @@ def process_inbound_udp(sock):
     if Type == WHOHAS:
         # received an WHOHAS pkt
         # see what chunk the sender has
-        whohas_chunk_hash = data[:20]
+        whohas_chunk_hash = data[0:]
         # bytes to hex_str
         chunkhash_str = bytes.hex(whohas_chunk_hash)
-        ex_sending_chunkhash = chunkhash_str
-
-        logger.info(f'Receive: WHOHAS {chunkhash_str}. Has {list(config.haschunks.keys())}')
-        if chunkhash_str in config.haschunks:
-            # send back IHAVE pkt
-            ihave_pkt = P2pPacket.ihave(whohas_chunk_hash)
-            sock.sendto(ihave_pkt, from_addr)
+        # request_hashes是peer请求的所有chunk的hash
+        request_hashes = re.findall('.{40}', chunkhash_str)
+        logger.info(f'收{from_addr} *WHOHAS* for {request_hashes}')
+        logger.debug(f'{list(config.haschunks.keys())}')
+        for hash in request_hashes:
+            if hash in list(config.haschunks.keys()):
+                ex_sending_chunkhash = hash
+                # send back IHAVE pkt
+                ihave_pkt = P2pPacket.ihave(bytes.fromhex(hash))
+                logger.info(f'发{from_addr} *IHAVE * for {hash}')
+                sock.sendto(ihave_pkt, from_addr)
     elif Type == IHAVE:
         # received an IHAVE pkt
         # see what chunk the sender has
         get_chunk_hash = data[:20]
-
+        logger.info(f'收{from_addr} *IHAVE * for {bytes.hex(get_chunk_hash)}')
         # send back GET pkt
         get_pkt = P2pPacket.get(get_chunk_hash)
+        logger.info(f'发{from_addr} *GET   * for {bytes.hex(get_chunk_hash)}')
         sock.sendto(get_pkt, from_addr)
     elif Type == GET:
         # received a GET pkt
         chunk_data = config.haschunks[ex_sending_chunkhash][:MAX_PAYLOAD]
-
+        logger.info(f'收{from_addr} *GET   * for {bytes.hex(pkt[HEADER_LEN:])}')
         # send back DATA
         data_pkt = P2pPacket.data(chunk_data, 1)
+        logger.info(f'发{from_addr} *DATA  * seq {1}')
         sock.sendto(data_pkt, from_addr)
     elif Type == DATA:
         # received a DATA pkt
         ex_received_chunk[ex_downloading_chunkhash] += data
-
+        logger.info(f'收{from_addr} *DATA  * seq {Seq}')
         # send back ACK
         ack_pkt = P2pPacket.ack(Seq)
+        logger.info(f'发{from_addr} *ACK   * seq {Seq}')
         sock.sendto(ack_pkt, from_addr)
 
         # see if finished
@@ -135,7 +151,8 @@ def process_inbound_udp(sock):
             else:
                 logger.warning('Example fails. Please check the example files carefully.')
     elif Type == ACK:
-        ack_num = socket.ntohl(Ack)
+        ack_num = Ack
+        logger.info(f'收{from_addr} *ACK   * seq {ack_num}')
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
             logger.info(f'Finished sending {ex_sending_chunkhash}')
@@ -146,6 +163,7 @@ def process_inbound_udp(sock):
             next_data = config.haschunks[ex_sending_chunkhash][left: right]
             # send next data
             data_pkt = P2pPacket.data(next_data, ack_num + 1)
+            logger.info(f'发{from_addr} *DATA  * seq {ack_num + 1}')
             sock.sendto(data_pkt, from_addr)
 
 
