@@ -39,9 +39,9 @@ logger.addHandler(ch)
 types = ['WHOHAS', 'IHAVE', 'GET', 'DATA', 'ACK', 'DENIED']
 
 # TODO: 通过维护session list来和不同peer通信
-# session list 里面存的是可以建立握手的socket
-session_list = []
-
+# session list 里面存的是(地址：20位hash)的dictionary
+# 方便后面每次收到一个包的时候，从地址-->hash-->分段data
+session_list = dict()
 
 def process_download(sock, chunkfile, outputfile):
     """
@@ -108,6 +108,10 @@ def process_inbound_udp(sock):
         get_pkt = P2pPacket.get(get_chunk_hash)
         logger.info(f'发{from_addr} *GET   * for {bytes.hex(get_chunk_hash)}')
         sock.sendto(get_pkt, from_addr)
+        # 在这里加入session list
+        session_list[from_addr]=bytes.hex(get_chunk_hash)
+        # logger.warning(f'收到ihave，地址是{from_addr}，hash是{bytes.hex(get_chunk_hash)}')
+        # logger.warning(session_list)
     elif Type == GET:
         # received a GET pkt
         chunk_data = config.haschunks[ex_sending_chunkhash][:MAX_PAYLOAD]
@@ -118,6 +122,9 @@ def process_inbound_udp(sock):
         sock.sendto(data_pkt, from_addr)
     elif Type == DATA:
         # received a DATA pkt
+        # 查session list中，用addr查询hash
+        ex_downloading_chunkhash = session_list[from_addr]
+        # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
         ex_received_chunk[ex_downloading_chunkhash] += data
         logger.info(f'收{from_addr} *DATA  * seq {Seq}')
         # send back ACK
