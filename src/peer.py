@@ -61,8 +61,6 @@ BETA = 0.25
 DEFAULT_TIMEOUT = 11.4  # 默认的超时时限
 
 start_time = dict()  # 用于记录测量RTT时的开始时间
-unacked_map = dict()
-ack_count = dict()
 
 
 def before_send_data(addr, seq, packet):
@@ -79,26 +77,8 @@ def before_send_data(addr, seq, packet):
             要发的包
     """
     start_time[(addr, seq)] = time.time()
-    ack_count[(addr, seq)] = 0
-    unacked_map[(addr, seq)] = packet
-
-
-def after_receive_ack(addr, ack):
-    """
-        收到ACK包后调用该函数。用于完成RTT的测量等事宜
-
-        Parameters
-        ----------
-        addr : tuple
-            源地址
-        ack : int
-            收到的包的ACK号
-    """
-    sample_rtt = time.time() - start_time[(addr, ack)]
-    update_rtt(addr, sample_rtt)
-    ack_count[(addr, ack)] += 1
-    unacked_map.pop((addr, ack))
-    start_time.pop((addr, ack))
+    ack_cnt_map[(addr, seq)] = 0
+    un_acked_data_pkt_map[(addr, seq)] = packet
 
 
 def update_rtt(addr, sample_rtt):
@@ -106,6 +86,7 @@ def update_rtt(addr, sample_rtt):
         assert addr in DEV_RTT.keys()
         ESTIMATED_RTT[addr] = (1 - ALPHA) * ESTIMATED_RTT[addr] + ALPHA * sample_rtt
         DEV_RTT[addr] = (1 - BETA) * DEV_RTT[addr] + BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
+        logger.debug(f'更新到 {addr} EstimatedRTT={ESTIMATED_RTT[addr]}, DevRTT={DEV_RTT[addr]}')
     else:
         ESTIMATED_RTT[addr] = ALPHA * sample_rtt
         DEV_RTT[addr] = BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
@@ -197,8 +178,8 @@ def process_inbound_udp(sock):
         # 发送之前处理一下，方便收到ack的时候测量rtt
         before_send_data(from_addr, 1, data_pkt)
         sock.sendto(data_pkt, from_addr)
-        ack_cnt_map[(from_addr, 1)] = 0
-        un_acked_data_pkt_map[(from_addr, 1)] = data_pkt
+        # ack_cnt_map[(from_addr, 1)] = 0
+        # un_acked_data_pkt_map[(from_addr, 1)] = data_pkt
     elif Type == DATA:
         # received a DATA pkt
         # 查session list中，用addr查询hash
@@ -241,11 +222,14 @@ def process_inbound_udp(sock):
         logger.info(f'收{from_addr} *ACK   * seq {ack_num}')
 
         # 在收到ack之后处理，得到rtt的测量值
-        after_receive_ack(from_addr, ack_num)
+        sample_rtt = time.time() - start_time[(from_addr, ack_num)]
+        update_rtt(from_addr, sample_rtt)
 
         # 收到ack的时候
         #   1.在un_acked_data_pkt_map中删除{seq:pkt}
         un_acked_data_pkt_map.pop((from_addr, ack_num))
+        start_time.pop((from_addr, ack_num))
+        ack_cnt_map[(from_addr, ack_num)] += 1
         #   2.查看在ack_cnt_map中记录的{seq:cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
         cnt = ack_cnt_map[(from_addr, ack_num)]
         if cnt >= 3:
@@ -254,8 +238,6 @@ def process_inbound_udp(sock):
             sock.sendto(data_pkt, from_addr)
             ack_cnt_map[(from_addr, ack_num + 1)] = 0
             ack_cnt_map[(from_addr, ack_num)] = 1
-        else:
-            ack_cnt_map[(from_addr, ack_num)] = cnt + 1
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
@@ -269,8 +251,9 @@ def process_inbound_udp(sock):
             data_pkt = P2pPacket.data(next_data, ack_num + 1)
             logger.info(f'发{from_addr} *DATA  * seq {ack_num + 1}')
             sock.sendto(data_pkt, from_addr)
-            ack_cnt_map[(from_addr, ack_num + 1)] = 0
-            un_acked_data_pkt_map[(from_addr, ack_num + 1)] = data_pkt
+            before_send_data(from_addr, ack_num + 1, data_pkt)
+            # ack_cnt_map[(from_addr, ack_num + 1)] = 0
+            # un_acked_data_pkt_map[(from_addr, ack_num + 1)] = data_pkt
 
 
 def process_user_input(sock):
@@ -285,8 +268,8 @@ def check_timeout(sock):
     for key, start in start_time.items():
         addr, seq = key
         if time.time() - start > timeout_interval_of(addr):
-            before_send_data(addr, seq, unacked_map[key])
-            sock.sendto(unacked_map[key], addr)
+            before_send_data(addr, seq, un_acked_data_pkt_map[key])
+            sock.sendto(un_acked_data_pkt_map[key], addr)
 
 
 # noinspection PyShadowingNames
