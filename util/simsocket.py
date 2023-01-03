@@ -13,6 +13,7 @@ class SimSocket:
     __gsSpiffyAddr = 0
     __spiffyHeaderLen = struct.calcsize("I4s4sHH")
 
+    # noinspection PyShadowingBuiltins
     def __init__(self, id, address, verbose=2) -> None:
         self.__address = address
         self.__sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -80,8 +81,7 @@ class SimSocket:
         if ret is not None:
             simu_bytes, addr = ret
             _, s_head_lSrcAddr, s_head_lDestAddr, s_head_lSrcPort, s_head_lDestPort = struct.unpack("I4s4sHH",
-                                                                                                    simu_bytes[
-                                                                                                    :self.__spiffyHeaderLen])
+                                                                                                    simu_bytes[:self.__spiffyHeaderLen])
             from_addr = (socket.inet_ntoa(s_head_lSrcAddr), socket.ntohs(s_head_lSrcPort))
             to_addr = (socket.inet_ntoa(s_head_lDestAddr), socket.ntohs(s_head_lDestPort))
             self.__logger.debug(f"Receiving a pkt from {from_addr} via spiffy")
@@ -93,18 +93,19 @@ class SimSocket:
             data_bytes = simu_bytes[self.__spiffyHeaderLen:]
         else:
             self.__logger.error("Error on simulator recvfrom")
+            data_bytes, from_addr = None, None
 
         return data_bytes, from_addr
 
     def __simulator_init(self, nodeid):
         simulator_env = os.getenv("SIMULATOR")
         if simulator_env is None:
-            self.__logger.warn("Simulator not set, using normal socket.")
+            self.__logger.warning("Simulator not set, using normal socket.")
             return False
 
         addr = simulator_env.split(":")
         if len(addr) != 2:
-            self.__logger.warn(f"Badly formatted addr: {simulator_env}")
+            self.__logger.warning(f"Badly formatted addr: {simulator_env}")
             return False
 
         self.__gsSpiffyAddr = (addr[0], int(addr[1]))

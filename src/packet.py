@@ -48,7 +48,7 @@ class P2pPacket:
     _PACKET_FORMAT = '!HBBHHII'
 
     _MAGIC = 52305
-    _TEAM = 35
+    _TEAM = 77
 
     def __init__(self):
         self.magic = P2pPacket._MAGIC
