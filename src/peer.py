@@ -59,6 +59,7 @@ ESTIMATED_RTT = dict()
 DEV_RTT = dict()
 ALPHA = 0.125
 BETA = 0.25
+DEFAULT_TIMEOUT = 11.4  # 默认的超时时限
 
 start_time = dict()  # 用于记录测量RTT时的开始时间
 unacked_map = dict()
@@ -111,8 +112,11 @@ def update_rtt(addr, sample_rtt):
         DEV_RTT[addr] = BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
 
 
-def timeout_interval_of(addr):
-    return ESTIMATED_RTT[addr] + 4 * DEV_RTT[addr]
+def timeout_interval_of(addr) -> float:
+    if addr in ESTIMATED_RTT.keys():
+        assert addr in DEV_RTT.keys()
+        return ESTIMATED_RTT[addr] + 4 * DEV_RTT[addr]
+    return DEFAULT_TIMEOUT
 
 
 def process_download(sock, chunkfile, outputfile):
