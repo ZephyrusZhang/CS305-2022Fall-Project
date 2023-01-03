@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import sys
+import time
 
 from config import *
 from formatter import CustomFormatter
@@ -53,6 +54,66 @@ un_acked_data_pkt_map = {}
 # 收到ack的时候
 #   1.在un_acked_data_pkt_map中删除{seq:pkt}
 #   2.查看在ack_cnt_map中记录的{seq:cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
+
+ESTIMATED_RTT = dict()
+DEV_RTT = dict()
+ALPHA = 0.125
+BETA = 0.25
+
+start_time = dict()  # 用于记录测量RTT时的开始时间
+unacked_map = dict()
+ack_count = dict()
+
+
+def before_send_data(addr, seq, packet):
+    """
+        发送DATA包前调用该函数。用于开始RTT的测量等一系列事宜
+
+        Parameters
+        ----------
+        addr : tuple
+            目的地的地址
+        seq : int
+            要发的DATA包的序列号
+        packet : bytes
+            要发的包
+    """
+    start_time[(addr, seq)] = time.time()
+    ack_count[(addr, seq)] = 0
+    unacked_map[(addr, seq)] = packet
+
+
+def after_receive_ack(addr, ack):
+    """
+        收到ACK包后调用该函数。用于完成RTT的测量等事宜
+
+        Parameters
+        ----------
+        addr : tuple
+            源地址
+        ack : int
+            收到的包的ACK号
+    """
+    sample_rtt = time.time() - start_time[(addr, ack)]
+    update_rtt(addr, sample_rtt)
+    ack_count[(addr, ack)] += 1
+    unacked_map.pop((addr, ack))
+    start_time.pop((addr, ack))
+
+
+def update_rtt(addr, sample_rtt):
+    if addr in ESTIMATED_RTT.keys():
+        assert addr in DEV_RTT.keys()
+        ESTIMATED_RTT[addr] = (1 - ALPHA) * ESTIMATED_RTT[addr] + ALPHA * sample_rtt
+        DEV_RTT[addr] = (1 - BETA) * DEV_RTT[addr] + BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
+    else:
+        ESTIMATED_RTT[addr] = ALPHA * sample_rtt
+        DEV_RTT[addr] = BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
+
+
+def timeout_interval_of(addr):
+    return ESTIMATED_RTT[addr] + 4 * DEV_RTT[addr]
+
 
 def process_download(sock, chunkfile, outputfile):
     """
@@ -212,6 +273,14 @@ def process_user_input(sock):
         pass
 
 
+def check_timeout(sock):
+    for key, start in start_time.items():
+        addr, seq = key
+        if time.time() - start > timeout_interval_of(addr):
+            before_send_data(addr, seq, unacked_map[key])
+            sock.sendto(unacked_map[key], addr)
+
+
 # noinspection PyShadowingNames
 def peer_run(config):
     addr = (config.ip, config.port)
@@ -219,6 +288,7 @@ def peer_run(config):
 
     try:
         while True:
+            check_timeout(sock)
             ready = select.select([sock, sys.stdin], [], [], 0.1)
             read_ready = ready[0]
             if len(read_ready) > 0:
