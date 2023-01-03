@@ -47,13 +47,12 @@ session_list = dict()
 ack_cnt_map = {}
 un_acked_data_pkt_map = {}
 
-
 # 发送data的时候
-#   1.在ack_cnt_map中记录{seq:0}
-#   2.在un_acked_data_pkt_map中记录{seq:pkt}
+#   1.在ack_cnt_map中记录{(addr,seq):0}
+#   2.在un_acked_data_pkt_map中记录{(addr,seq):pkt}
 # 收到ack的时候
-#   1.在un_acked_data_pkt_map中删除{seq:pkt}
-#   2.查看在ack_cnt_map中记录的{seq:cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
+#   1.在un_acked_data_pkt_map中删除{(addr,seq):pkt}
+#   2.查看在ack_cnt_map中记录的{(addr,seq):cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
 
 ESTIMATED_RTT = dict()
 DEV_RTT = dict()
@@ -196,8 +195,8 @@ def process_inbound_udp(sock):
         data_pkt = P2pPacket.data(chunk_data, 1)
         logger.info(f'发{from_addr} *DATA  * seq {1}')
         sock.sendto(data_pkt, from_addr)
-        ack_cnt_map[1] = 0
-        un_acked_data_pkt_map[1] = data_pkt
+        ack_cnt_map[(from_addr, 1)] = 0
+        un_acked_data_pkt_map[(from_addr, 1)] = data_pkt
     elif Type == DATA:
         # received a DATA pkt
         # 查session list中，用addr查询hash
@@ -241,17 +240,17 @@ def process_inbound_udp(sock):
 
         # 收到ack的时候
         #   1.在un_acked_data_pkt_map中删除{seq:pkt}
-        un_acked_data_pkt_map.pop(ack_num)
+        un_acked_data_pkt_map.pop((from_addr, ack_num))
         #   2.查看在ack_cnt_map中记录的{seq:cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
-        cnt = ack_cnt_map[ack_num]
+        cnt = ack_cnt_map[(from_addr, ack_num)]
         if cnt >= 3:
             logger.warning(f'快速重传 data pkt seq {ack_num + 1}')
-            data_pkt = un_acked_data_pkt_map[ack_num + 1]
+            data_pkt = un_acked_data_pkt_map[(from_addr, ack_num + 1)]
             sock.sendto(data_pkt, from_addr)
-            ack_cnt_map[ack_num + 1] = 0
-            ack_cnt_map[ack_num] = 1
+            ack_cnt_map[(from_addr, ack_num + 1)] = 0
+            ack_cnt_map[(from_addr, ack_num)] = 1
         else:
-            ack_cnt_map[ack_num] = cnt + 1
+            ack_cnt_map[(from_addr, ack_num)] = cnt + 1
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
@@ -265,8 +264,8 @@ def process_inbound_udp(sock):
             data_pkt = P2pPacket.data(next_data, ack_num + 1)
             logger.info(f'发{from_addr} *DATA  * seq {ack_num + 1}')
             sock.sendto(data_pkt, from_addr)
-            ack_cnt_map[ack_num + 1] = 0
-            un_acked_data_pkt_map[ack_num + 1] = data_pkt
+            ack_cnt_map[(from_addr, ack_num + 1)] = 0
+            un_acked_data_pkt_map[(from_addr, ack_num + 1)] = data_pkt
 
 
 def process_user_input(sock):
