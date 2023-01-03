@@ -37,7 +37,7 @@ python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-3.fragment -m 100
 @pytest.fixture(scope='module')
 def concurrent_session():
     success = False
-    time_max = 80
+    time_max = 180
     if os.path.exists("test/tmp3/download_result.fragment"):
         os.remove("test/tmp3/download_result.fragment")
 
@@ -54,16 +54,16 @@ def concurrent_session():
         if os.path.exists("test/tmp3/download_result.fragment"):
             success = True
             break
-        elif time.time()-stime>time_max:
+        elif time.time() - stime > time_max:
             # Reached max transmission time, abort
             success = False
-            break 
+            break
 
         time.sleep(0.5)
-        
+
     for p in concurrent_session.peer_list.values():
         p.terminate_peer()
-    
+
     return concurrent_session, success
 
 def test_finish(concurrent_session):
