@@ -43,6 +43,17 @@ types = ['WHOHAS', 'IHAVE', 'GET', 'DATA', 'ACK', 'DENIED']
 # 方便后面每次收到一个包的时候，从地址-->hash-->分段data
 session_list = dict()
 
+ack_cnt_map = {}
+un_acked_data_pkt_map = {}
+
+
+# 发送data的时候
+#   1.在ack_cnt_map中记录{seq:0}
+#   2.在un_acked_data_pkt_map中记录{seq:pkt}
+# 收到ack的时候
+#   1.在un_acked_data_pkt_map中删除{seq:pkt}
+#   2.查看在ack_cnt_map中记录的{seq:cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
+
 def process_download(sock, chunkfile, outputfile):
     """
     if DOWNLOAD is used, the peer will keep getting files until it is done
@@ -109,7 +120,7 @@ def process_inbound_udp(sock):
         logger.info(f'发{from_addr} *GET   * for {bytes.hex(get_chunk_hash)}')
         sock.sendto(get_pkt, from_addr)
         # 在这里加入session list
-        session_list[from_addr]=bytes.hex(get_chunk_hash)
+        session_list[from_addr] = bytes.hex(get_chunk_hash)
         # logger.warning(f'收到ihave，地址是{from_addr}，hash是{bytes.hex(get_chunk_hash)}')
         # logger.warning(session_list)
     elif Type == GET:
@@ -120,6 +131,8 @@ def process_inbound_udp(sock):
         data_pkt = P2pPacket.data(chunk_data, 1)
         logger.info(f'发{from_addr} *DATA  * seq {1}')
         sock.sendto(data_pkt, from_addr)
+        ack_cnt_map[1] = 0
+        un_acked_data_pkt_map[1] = data_pkt
     elif Type == DATA:
         # received a DATA pkt
         # 查session list中，用addr查询hash
@@ -160,6 +173,21 @@ def process_inbound_udp(sock):
     elif Type == ACK:
         ack_num = Ack
         logger.info(f'收{from_addr} *ACK   * seq {ack_num}')
+
+        # 收到ack的时候
+        #   1.在un_acked_data_pkt_map中删除{seq:pkt}
+        un_acked_data_pkt_map.pop(ack_num)
+        #   2.查看在ack_cnt_map中记录的{seq:cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
+        cnt = ack_cnt_map[ack_num]
+        if cnt >= 3:
+            logger.warning(f'快速重传 data pkt seq {ack_num + 1}')
+            data_pkt = un_acked_data_pkt_map[ack_num + 1]
+            sock.sendto(data_pkt, from_addr)
+            ack_cnt_map[ack_num + 1] = 0
+            ack_cnt_map[ack_num] = 1
+        else:
+            ack_cnt_map[ack_num] = cnt + 1
+
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
             logger.info(f'Finished sending {ex_sending_chunkhash}')
@@ -172,6 +200,8 @@ def process_inbound_udp(sock):
             data_pkt = P2pPacket.data(next_data, ack_num + 1)
             logger.info(f'发{from_addr} *DATA  * seq {ack_num + 1}')
             sock.sendto(data_pkt, from_addr)
+            ack_cnt_map[ack_num + 1] = 0
+            un_acked_data_pkt_map[ack_num + 1] = data_pkt
 
 
 def process_user_input(sock):
