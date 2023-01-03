@@ -194,6 +194,8 @@ def process_inbound_udp(sock):
         # send back DATA
         data_pkt = P2pPacket.data(chunk_data, 1)
         logger.info(f'发{from_addr} *DATA  * seq {1}')
+        # 发送之前处理一下，方便收到ack的时候测量rtt
+        before_send_data(from_addr, 1, data_pkt)
         sock.sendto(data_pkt, from_addr)
         ack_cnt_map[(from_addr, 1)] = 0
         un_acked_data_pkt_map[(from_addr, 1)] = data_pkt
@@ -237,6 +239,9 @@ def process_inbound_udp(sock):
     elif Type == ACK:
         ack_num = Ack
         logger.info(f'收{from_addr} *ACK   * seq {ack_num}')
+
+        # 在收到ack之后处理，得到rtt的测量值
+        after_receive_ack(from_addr, ack_num)
 
         # 收到ack的时候
         #   1.在un_acked_data_pkt_map中删除{seq:pkt}
