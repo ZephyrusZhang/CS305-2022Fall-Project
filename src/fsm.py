@@ -1,4 +1,7 @@
 import math
+import time
+
+import matplotlib.pyplot as plt
 
 
 class State:
@@ -38,6 +41,7 @@ class FSM:
         self.cwnd = 1
         self.ssthresh = 64
         self.state = State.SlowStart
+        self.cwnd_record = ([time.time()], [self.cwnd])
 
     def update(self, event):
         trigger = (self.state, event)
@@ -53,3 +57,14 @@ class FSM:
         else:
             raise ValueError('No such trigger')
         self.state = FSM._TRANSITION[trigger]
+
+    def _change_cwnd_to(self, value):
+        self.cwnd = value
+        self.cwnd_record[0].append(time.time())
+        self.cwnd_record[1].append(value)
+
+    def cwnd_visualizer(self, identification):
+        plt.plot(self.cwnd_record[0], self.cwnd_record[1])
+        plt.title(f'Peer-{identification} cwnd变化趋势')
+        plt.xlabel('time')
+        plt.ylabel('cwnd')
