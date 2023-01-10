@@ -20,5 +20,5 @@ open -a terminal.app $(dirname "$0")/simulator.sh
 # run peers
 open -a terminal.app $(dirname "$0")/peer1.sh
 open -a terminal.app $(dirname "$0")/peer2.sh
-# open -a terminal.app $(dirname "$0")/peer3.sh
-# open -a terminal.app $(dirname "$0")/peer4.sh
+open -a terminal.app $(dirname "$0")/peer3.sh
+open -a terminal.app $(dirname "$0")/peer4.sh

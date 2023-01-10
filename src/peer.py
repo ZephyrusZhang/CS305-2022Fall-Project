@@ -58,9 +58,9 @@ ESTIMATED_RTT = dict()
 DEV_RTT = dict()
 ALPHA = 0.125
 BETA = 0.25
-DEFAULT_TIMEOUT = 1  # 默认的超时时限
-INIT_ESTIMATED_RTT = 1
-INIT_DEV_RTT_BETA = 1
+DEFAULT_TIMEOUT = 6  # 默认的超时时限
+INIT_ESTIMATED_RTT = 6
+INIT_DEV_RTT_BETA = 6
 
 start_time = dict()  # 用于记录测量RTT时的开始时间
 
@@ -68,8 +68,8 @@ cwnd = 5
 base = 1  # 发送窗口的起点
 next_seq_num = base + cwnd  # 发送窗口的重终点的下一个
 
-# 接收方收到最大的max_data_pkt_seq
-max_data_pkt_seq = 0
+# 接收方收到最大的max_data_pkt_seq, key是from_addr,value是 seq
+max_data_pkt_seq = dict()
 
 b = True
 
@@ -152,7 +152,7 @@ def process_download(sock, chunkfile, outputfile):
 
 def process_inbound_udp(sock):
     # Receive pkt
-    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b
+    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -187,6 +187,9 @@ def process_inbound_udp(sock):
         session_list[from_addr] = bytes.hex(get_chunk_hash)
         # logger.warning(f'收到ihave，地址是{from_addr}，hash是{bytes.hex(get_chunk_hash)}')
         # logger.warning(session_list)
+        # 初始化该地址的应该ack的seq的最大值
+        max_data_pkt_seq[from_addr] = 0
+
     elif Type == GET:
         # received a GET pkt
         logger.info(f'收{from_addr} *GET   * for {bytes.hex(pkt[HEADER_LEN:])}')
@@ -208,22 +211,26 @@ def process_inbound_udp(sock):
                 b = False
                 return
                 # received a DATA pkt
-        # 查session list中，用addr查询hash
-        ex_downloading_chunkhash = session_list[from_addr]
-        # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
-        ex_received_chunk[ex_downloading_chunkhash] += data
-        logger.info(f'收{from_addr} *DATA  * seq {Seq}')
 
-        if Seq == max_data_pkt_seq + 1:
+        # 顺序接收，最大seq号码加一，整理data加到收集中
+        if Seq == max_data_pkt_seq[from_addr] + 1:
             # send back ACK
             ack_pkt = P2pPacket.ack(Seq)
             logger.info(f'发{from_addr} *ACK   * seq {Seq}')
             sock.sendto(ack_pkt, from_addr)
-            max_data_pkt_seq += 1
+            max_data_pkt_seq[from_addr] += 1
+            # 查session list中，用addr查询hash
+            ex_downloading_chunkhash = session_list[from_addr]
+            # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
+            ex_received_chunk[ex_downloading_chunkhash] += data
+            logger.info(f'收{from_addr} *DATA  * seq {Seq}')
+
+        # 乱序接收，抛弃，ack最大seq号
         else:
             # 乱序data包，ack 需要的包的前一个
-            ack_pkt = P2pPacket.ack(max_data_pkt_seq)
-            logger.info(f'发{from_addr} *ACK   * seq {max_data_pkt_seq}')
+            logger.warning(f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{max_data_pkt_seq[from_addr]}')
+            ack_pkt = P2pPacket.ack(max_data_pkt_seq[from_addr])
+            logger.info(f'发{from_addr} *ACK   * seq {max_data_pkt_seq[from_addr]}')
             sock.sendto(ack_pkt, from_addr)
 
         # see if finished
@@ -255,8 +262,15 @@ def process_inbound_udp(sock):
         print('')
         ack_num = Ack
 
+        # 第零件事，判断一下是否对方已经接收了ack了所有的pkt
+        if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+            logger.warning(f'对方ACK了所有pkt，应该结束传输')
+            # 关闭所有的定时器
+            start_time = dict()
+            return
+
         # 第一件事，先检查收到的ack是不是在发送窗口内
-        logger.warning(f'当前窗口是[{base}-{next_seq_num - 1}]')
+        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{base}-{next_seq_num - 1}]')
         # 在窗口内，检查是否是base
         if ack_num in range(base, next_seq_num):
             # print('在窗口内')
@@ -270,7 +284,11 @@ def process_inbound_udp(sock):
                 # 更新窗口
                 base += 1
                 next_seq_num = base + cwnd
-                logger.warning(f'收到了ACK {ack_num}，**更新** 窗口为[{base}-{next_seq_num - 1}]')
+                # 注意(next_seq_num - 1)是窗口最后一个包的seq
+                # 所以 (next_seq_num - 1) * MAX_PAYLOAD 不能大于 CHUNK_DATA_SIZE
+                while (next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
+                    next_seq_num -= 1
+                logger.warning(f'**更新** 窗口为[{base}-{next_seq_num - 1}]')
 
                 # 更新窗口之后，检查窗口内是否有没有 被发出去的分组
                 # 在窗口里，就是in range(base, next_seq_num)
@@ -290,7 +308,7 @@ def process_inbound_udp(sock):
 
             # 如果不是base，直接抛弃这个ack
             else:
-                logger.warning(f'收到了ACK {ack_num}，**抛弃** 窗口为[{base}-{next_seq_num - 1}]')
+                logger.warning(f'**抛弃** 窗口为[{base}-{next_seq_num - 1}]')
 
         # 如果不在窗口里面，先ack它，再检查是否是ack 3次，需要重新传
         else:
