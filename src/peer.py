@@ -4,7 +4,7 @@ import re
 import sys
 
 from config import *
-from formatter import CustomFormatter
+from formatter import *
 from fsm import *
 from packet import P2pPacket
 
@@ -29,12 +29,7 @@ ex_received_chunk = dict()
 ex_downloading_chunkhash: str = ''
 
 # Set logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-ch.setFormatter(CustomFormatter())
-logger.addHandler(ch)
+logger = get_logger(__name__)
 
 # types
 types = ['WHOHAS', 'IHAVE', 'GET', 'DATA', 'ACK', 'DENIED']
@@ -270,6 +265,7 @@ def process_inbound_udp(sock):
                 logger.info('Congrats! You have completed the example!')
             else:
                 logger.warning('Example fails. Please check the example files carefully.')
+            fsm.cwnd_visualizer(config.identity)
     elif Type == ACK:
         print('')
         ack_num = Ack

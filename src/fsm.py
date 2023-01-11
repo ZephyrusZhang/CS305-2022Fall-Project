@@ -3,6 +3,10 @@ import time
 
 import matplotlib.pyplot as plt
 
+from formatter import *
+
+logger = get_logger(__name__)
+
 
 class State:
     SlowStart = 'SlowStart'
@@ -45,6 +49,7 @@ class FSM:
 
     def update(self, event):
         trigger = (self.state, event)
+        tmp_state, tmp_cwnd, tmp_ssthresh = self.state, self.cwnd, self.ssthresh
         if trigger == Trigger.one or trigger == Trigger.two or trigger == Trigger.six or trigger == Trigger.seven:
             self.ssthresh = max(math.floor(self.cwnd / 2), 2)
             # self.cwnd = 1
@@ -60,6 +65,7 @@ class FSM:
             self.change_cwnd_to(self.cwnd + 1)
         else:
             raise ValueError('No such trigger')
+        logger.info(f'Event {event}, State <{tmp_state} -> {self.state}>, cwnd <{tmp_cwnd} -> {self.cwnd}>, ssthresh <{tmp_ssthresh} -> {self.ssthresh}>')
         self.state = FSM._TRANSITION[trigger]
 
     def change_cwnd_to(self, value):
@@ -72,6 +78,7 @@ class FSM:
         plt.title(f'Peer-{identification} cwnd变化趋势')
         plt.xlabel('time')
         plt.ylabel('cwnd')
+        plt.show()
 
     def get_cwnd(self):
         return math.floor(self.cwnd)
