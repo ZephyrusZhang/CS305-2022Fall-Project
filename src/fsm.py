@@ -66,8 +66,9 @@ class FSM:
         else:
             raise ValueError('No such trigger')
         self.state = FSM._TRANSITION[trigger]
-        logger.info(f'Event {event},Trigger {trigger}, State <{tmp_state} -> {self.state}>, cwnd <{tmp_cwnd} -> {self.cwnd}>, ssthresh <{tmp_ssthresh} -> {self.ssthresh}>')
-        if self.cwnd >= self.ssthresh:
+        logger.info(
+            f'Event {event},Trigger {trigger}, State <{tmp_state} -> {self.state}>, cwnd <{tmp_cwnd} -> {self.cwnd}>, ssthresh <{tmp_ssthresh} -> {self.ssthresh}>')
+        if self.cwnd >= self.ssthresh and self.state == State.SlowStart:
             self.update(Event.CwndBtSsthresh)
 
     def change_cwnd_to(self, value):
