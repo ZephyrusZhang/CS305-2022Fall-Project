@@ -95,6 +95,9 @@ def before_send_data(addr, seq, packet):
 def get_chunk_data(hashcode, seq):
     return config.haschunks[hashcode][MAX_PAYLOAD * (seq - 1):min(MAX_PAYLOAD * seq, CHUNK_DATA_SIZE)]
 
+def get_receive_data(hashcode, seq):
+    return ex_received_chunk[hashcode][MAX_PAYLOAD * (seq - 1):min(MAX_PAYLOAD * seq, CHUNK_DATA_SIZE)]
+
 
 def update_rtt(addr, sample_rtt):
     if addr in ESTIMATED_RTT.keys():
@@ -208,11 +211,11 @@ def process_inbound_udp(sock):
             un_acked_data_pkt_map[(from_addr, i)] = data_pkt
 
     elif Type == DATA:
-        if b:
-            if Seq == 1:
-                b = False
-                return
-                # received a DATA pkt
+        # if b:
+        #     if Seq == 1:
+        #         b = False
+        #         return
+        #         # received a DATA pkt
 
         # 顺序接收，最大seq号码加一，整理data加到收集中
         if Seq == max_data_pkt_seq[from_addr] + 1:
@@ -224,8 +227,13 @@ def process_inbound_udp(sock):
             # 查session list中，用addr查询hash
             ex_downloading_chunkhash = session_list[from_addr]
             # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
-            ex_received_chunk[ex_downloading_chunkhash] += data
-            logger.info(f'收{from_addr} *DATA  * seq {Seq}')
+            if data == get_receive_data(ex_downloading_chunkhash, Seq):
+                logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
+                return
+            else:
+                logger.warning('第一次收到了这个hash-seq的data，加到下载文件的末尾')
+                ex_received_chunk[ex_downloading_chunkhash] += data
+                logger.info(f'收{from_addr} *DATA  * seq {Seq}')
 
         # 乱序接收，抛弃，ack最大seq号
         else:
