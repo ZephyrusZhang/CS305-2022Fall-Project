@@ -1,5 +1,3 @@
-import struct
-
 from config import *
 
 
@@ -170,3 +168,11 @@ class P2pPacket:
                            HEADER_LEN,
                            0,
                            ack)
+
+    @staticmethod
+    def stop():
+        return struct.pack(P2pPacket._PACKET_FORMAT,
+                           P2pPacket._MAGIC,
+                           P2pPacket._TEAM,
+                           STOP,
+                           HEADER_LEN, HEADER_LEN, 0, 0)
