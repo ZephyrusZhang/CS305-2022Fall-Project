@@ -53,9 +53,9 @@ ESTIMATED_RTT = dict()
 DEV_RTT = dict()
 ALPHA = 0.125
 BETA = 0.25
-DEFAULT_TIMEOUT = 6  # 默认的超时时限
-INIT_ESTIMATED_RTT = 6
-INIT_DEV_RTT_BETA = 6
+DEFAULT_TIMEOUT = 999_999_999  # 默认的超时时限
+INIT_ESTIMATED_RTT = 999_999_999
+INIT_DEV_RTT_BETA = 999_999_999
 
 start_time = dict()  # 用于记录测量RTT时的开始时间
 
@@ -279,7 +279,7 @@ def process_inbound_udp(sock):
             return
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
-        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{base}-{next_seq_num - 1}]')
+        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{base}-{next_seq_num - 1}]({next_seq_num-base})')
         # 在窗口内，检查是否是base
         if ack_num in range(base, next_seq_num):
             # print('在窗口内')
@@ -297,7 +297,7 @@ def process_inbound_udp(sock):
                 # 所以 (next_seq_num - 1) * MAX_PAYLOAD 不能大于 CHUNK_DATA_SIZE
                 while (next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
                     next_seq_num -= 1
-                logger.warning(f'**更新** 窗口为[{base}-{next_seq_num - 1}]')
+                logger.warning(f'**更新** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num-base})')
 
                 # 更新窗口之后，检查窗口内是否有没有 被发出去的分组
                 # 在窗口里，就是in range(base, next_seq_num)
@@ -317,7 +317,7 @@ def process_inbound_udp(sock):
 
             # 如果不是base，直接抛弃这个ack
             else:
-                logger.warning(f'**抛弃** 窗口为[{base}-{next_seq_num - 1}]')
+                logger.warning(f'**抛弃** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num-base})')
 
         # 如果不在窗口里面，先ack它，再检查是否是ack 3次，需要重新传
         else:
@@ -350,9 +350,9 @@ def process_user_input(sock):
 
 def check_timeout(sock):
     for key, start in start_time.items():
-        fsm.update(Event.Timeout)
         addr, seq = key
         if time.time() - start > timeout_interval_of(addr):
+            fsm.update(Event.Timeout)
             logger.warning(f"time out retransmission {seq}")
             before_send_data(addr, seq, un_acked_data_pkt_map[key])
             sock.sendto(un_acked_data_pkt_map[key], addr)

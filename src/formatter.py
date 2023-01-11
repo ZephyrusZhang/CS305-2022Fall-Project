@@ -2,7 +2,6 @@ import logging
 
 
 class CustomFormatter(logging.Formatter):
-
     grey = "\x1b[38;20m"
     yellow = "\x1b[33;20m"
     red = "\x1b[31;20m"
@@ -32,3 +31,4 @@ def get_logger(name):
     ch.setLevel(logging.DEBUG)
     ch.setFormatter(CustomFormatter())
     logger.addHandler(ch)
+    return logger
