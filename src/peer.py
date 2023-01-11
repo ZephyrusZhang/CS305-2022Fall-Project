@@ -2,10 +2,10 @@ import logging
 import os
 import re
 import sys
-import time
 
 from config import *
 from formatter import CustomFormatter
+from fsm import *
 from packet import P2pPacket
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -64,9 +64,11 @@ INIT_DEV_RTT_BETA = 6
 
 start_time = dict()  # 用于记录测量RTT时的开始时间
 
-cwnd = 5
+fsm = FSM()
+
+# cwnd = 5
 base = 1  # 发送窗口的起点
-next_seq_num = base + cwnd  # 发送窗口的重终点的下一个
+next_seq_num = base + fsm.get_cwnd()  # 发送窗口的重终点的下一个
 
 # 接收方收到最大的max_data_pkt_seq, key是from_addr,value是 seq
 max_data_pkt_seq = dict()
@@ -271,6 +273,7 @@ def process_inbound_udp(sock):
     elif Type == ACK:
         print('')
         ack_num = Ack
+        fsm.update(Event.NewAck)
 
         # 第零件事，判断一下是否对方已经接收了ack了所有的pkt
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
@@ -293,7 +296,7 @@ def process_inbound_udp(sock):
                 start_time.pop((from_addr, ack_num))
                 # 更新窗口
                 base += 1
-                next_seq_num = base + cwnd
+                next_seq_num = base + fsm.get_cwnd()
                 # 注意(next_seq_num - 1)是窗口最后一个包的seq
                 # 所以 (next_seq_num - 1) * MAX_PAYLOAD 不能大于 CHUNK_DATA_SIZE
                 while (next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
@@ -327,6 +330,7 @@ def process_inbound_udp(sock):
             # 再检查是否需要重传
             if ack_cnt_map[(from_addr, ack_num)] == 3:
                 print('窗口左边收到三个冗余ack，重传整个窗口')
+                fsm.update(Event.Duplicate3Ack)
                 for i in range(base, next_seq_num):
                     i_data = get_chunk_data(ex_sending_chunkhash, i)
                     i_pkt = P2pPacket.data(i_data, i)
@@ -350,6 +354,7 @@ def process_user_input(sock):
 
 def check_timeout(sock):
     for key, start in start_time.items():
+        fsm.update(Event.Timeout)
         addr, seq = key
         if time.time() - start > timeout_interval_of(addr):
             logger.warning(f"time out retransmission {seq}")

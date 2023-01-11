@@ -47,18 +47,22 @@ class FSM:
         trigger = (self.state, event)
         if trigger == Trigger.one or trigger == Trigger.two or trigger == Trigger.six or trigger == Trigger.seven:
             self.ssthresh = max(math.floor(self.cwnd / 2), 2)
-            self.cwnd = 1
+            # self.cwnd = 1
+            self.change_cwnd_to(1)
         elif trigger == Trigger.three:
-            self.cwnd += 1
+            # self.cwnd += 1
+            self.change_cwnd_to(self.cwnd + 1)
         elif trigger == Trigger.four:
             pass
         elif trigger == Trigger.five:
-            self.cwnd = math.floor((self.cwnd + 1) / self.cwnd)
+            # self.cwnd = self.cwnd + (1 / self.cwnd)
+            # self.change_cwnd_to(self.cwnd + (1 / self.cwnd))
+            self.change_cwnd_to(self.cwnd + 1)
         else:
             raise ValueError('No such trigger')
         self.state = FSM._TRANSITION[trigger]
 
-    def _change_cwnd_to(self, value):
+    def change_cwnd_to(self, value):
         self.cwnd = value
         self.cwnd_record[0].append(time.time())
         self.cwnd_record[1].append(value)
@@ -68,3 +72,6 @@ class FSM:
         plt.title(f'Peer-{identification} cwnd变化趋势')
         plt.xlabel('time')
         plt.ylabel('cwnd')
+
+    def get_cwnd(self):
+        return math.floor(self.cwnd)
