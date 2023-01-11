@@ -190,11 +190,13 @@ def process_inbound_udp(sock):
         # 初始化该地址的应该ack的seq的最大值
         max_data_pkt_seq[from_addr] = 0
 
+
     elif Type == GET:
         # received a GET pkt
         logger.info(f'收{from_addr} *GET   * for {bytes.hex(pkt[HEADER_LEN:])}')
 
         # 直接发送 cwnd 个data pkt
+        ack_cnt_map[(from_addr, 0)] = 0
         for i in range(base, next_seq_num):
             chunk_data = get_chunk_data(ex_sending_chunkhash, i)
             data_pkt = P2pPacket.data(chunk_data, i)
@@ -207,7 +209,7 @@ def process_inbound_udp(sock):
 
     elif Type == DATA:
         if b:
-            if Seq == 2:
+            if Seq == 1:
                 b = False
                 return
                 # received a DATA pkt
