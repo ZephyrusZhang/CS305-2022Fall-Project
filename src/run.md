@@ -14,6 +14,13 @@ sed -n "3p" master.chunkhash > example/download3.chunkhash
 sed -n "4p" master.chunkhash > example/download4.chunkhash
 ```
 
+```bash
+cd ..
+pwd
+cd test/tmp5
+sed -n "5p" master.chunkhash > targets/download.chunkhash
+```
+
 Run simulator
 ```bash
 cd ..

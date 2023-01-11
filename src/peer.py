@@ -115,7 +115,7 @@ def update_rtt(addr, sample_rtt):
 
 
 def timeout_interval_of(addr) -> float:
-    if config.timeout is not None:
+    if config.timeout != 999_999_999:
         return config.timeout
     if addr in ESTIMATED_RTT.keys():
         assert addr in DEV_RTT.keys()
@@ -419,7 +419,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', type=int, help='<maxconn>      Max # of concurrent sending')
     parser.add_argument('-i', type=int, help='<identity>     Which peer # am I?')
     parser.add_argument('-v', type=int, help='verbose level', default=0)
-    parser.add_argument('-t', type=int, help="pre-defined timeout", default=0)
+    parser.add_argument('-t', type=int, help="pre-defined timeout", default=999_999_999)
     args = parser.parse_args()
 
     config = bt_utils.BtConfig(args)
