@@ -45,7 +45,9 @@ class FSM:
         self.cwnd = 1
         self.ssthresh = 64
         self.state = State.SlowStart
-        self.cwnd_record = ([time.time()], [self.cwnd])
+        self._start_time = time.time()
+        self._times = [0.]
+        self._cwnds = [self.cwnd]
 
     def update(self, event):
         trigger = (self.state, event)
@@ -73,15 +75,15 @@ class FSM:
 
     def change_cwnd_to(self, value):
         self.cwnd = value
-        self.cwnd_record[0].append(time.time())
-        self.cwnd_record[1].append(value)
+        self._times.append(time.time() - self._start_time)
+        self._cwnds.append(value)
 
-    def cwnd_visualizer(self, identification):
-        plt.plot(self.cwnd_record[0], self.cwnd_record[1])
-        plt.title(f'Peer-{identification} cwnd变化趋势')
+    def cwnd_visualizer(self, identity):
+        plt.plot(self._times, self._cwnds, '-')
+        plt.title(f'Peer-{identity} cwnd trend')
         plt.xlabel('time')
         plt.ylabel('cwnd')
-        plt.show()
+        plt.savefig(f'Peer-{identity} cwnd.png')
 
     def get_cwnd(self):
         return math.floor(self.cwnd)
