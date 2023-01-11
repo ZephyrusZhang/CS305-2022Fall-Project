@@ -108,6 +108,8 @@ def update_rtt(addr, sample_rtt):
 
 
 def timeout_interval_of(addr) -> float:
+    if config.timeout is not None:
+        return config.timeout
     if addr in ESTIMATED_RTT.keys():
         assert addr in DEV_RTT.keys()
         return ESTIMATED_RTT[addr] + 4 * DEV_RTT[addr]
