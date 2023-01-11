@@ -1,10 +1,9 @@
-import logging
 import os
 import re
 import sys
+import atexit
 
 from config import *
-from formatter import *
 from fsm import *
 from packet import P2pPacket
 
@@ -68,7 +67,15 @@ next_seq_num = base + fsm.get_cwnd()  # 发送窗口的重终点的下一个
 # 接收方收到最大的max_data_pkt_seq, key是from_addr,value是 seq
 max_data_pkt_seq = dict()
 
-b = True
+
+def reset():
+    global ex_sending_chunkhash, ex_output_file, ex_received_chunk, ex_downloading_chunkhash
+    global session_list, ack_cnt_map, un_acked_data_pkt_map, start_time, max_data_pkt_seq
+    global base, next_seq_num, fsm
+    ex_sending_chunkhash, ex_output_file, ex_received_chunk, ex_downloading_chunkhash = '', '', dict(), ''
+    session_list, ack_cnt_map, un_acked_data_pkt_map, start_time, max_data_pkt_seq = dict(), dict(), dict(), dict(), dict()
+    fsm = FSM()
+    base, next_seq_num = 1, base + fsm.get_cwnd()
 
 
 def before_send_data(addr, seq, packet):
@@ -192,7 +199,6 @@ def process_inbound_udp(sock):
         # 初始化该地址的应该ack的seq的最大值
         max_data_pkt_seq[from_addr] = 0
 
-
     elif Type == GET:
         # received a GET pkt
         logger.info(f'收{from_addr} *GET   * for {bytes.hex(pkt[HEADER_LEN:])}')
@@ -215,6 +221,10 @@ def process_inbound_udp(sock):
         #         b = False
         #         return
         #         # received a DATA pkt
+
+        if from_addr not in session_list.keys():
+            logger.warning('收到未建立连接的peer传输来的包，丢弃掉')
+            return
 
         # 顺序接收，最大seq号码加一，整理data加到收集中
         if Seq == max_data_pkt_seq[from_addr] + 1:
@@ -267,7 +277,12 @@ def process_inbound_udp(sock):
                 logger.info('Congrats! You have completed the example!')
             else:
                 logger.warning('Example fails. Please check the example files carefully.')
-            fsm.cwnd_visualizer(config.identity)
+
+            logger.info('接收结束，断开所有连接，重置peer')
+            for peer in session_list.keys():
+                stop_pkt = P2pPacket.stop()
+                sock.sendto(stop_pkt, peer)
+            reset()
     elif Type == ACK:
         print('')
         ack_num = Ack
@@ -340,6 +355,10 @@ def process_inbound_udp(sock):
                     # 记录发送信息
                     logger.warning(f'快速重传时，发送data {i}')
             pass
+    elif Type == STOP:
+        logger.info('接收方接收完毕，重置peer')
+        fsm.cwnd_visualizer(config.identity)
+        reset()
 
 
 def process_user_input(sock):
