@@ -1,7 +1,6 @@
 import os
 import re
 import sys
-import atexit
 
 from config import *
 from fsm import *
@@ -68,7 +67,22 @@ next_seq_num = base + fsm.get_cwnd()  # 发送窗口的重终点的下一个
 max_data_pkt_seq = dict()
 
 
+# def reset_sender(from_addr):
+#     global ex_sending_chunkhash, ack_cnt_map, un_acked_data_pkt_map, start_time
+#     ex_sending_chunkhash = ''
+#     ack_cnt_map, un_acked_data_pkt_map, start_time = dict(), dict(), dict()
+#     for addr, ack in
+#
+#
+# def reset_receiver(from_addr):
+#     global ex_output_file, ex_received_chunk, ex_downloading_chunkhash, session_list
+#     ex_output_file, ex_downloading_chunkhash = '', ''
+#     ex_received_chunk = dict()
+#     session_list.pop(from_addr)
+
+
 def reset():
+    logger.info(f'重置 Peer-{config.identity}')
     global ex_sending_chunkhash, ex_output_file, ex_received_chunk, ex_downloading_chunkhash
     global session_list, ack_cnt_map, un_acked_data_pkt_map, start_time, max_data_pkt_seq
     global base, next_seq_num, fsm
@@ -98,6 +112,7 @@ def before_send_data(addr, seq, packet):
 
 def get_chunk_data(hashcode, seq):
     return config.haschunks[hashcode][MAX_PAYLOAD * (seq - 1):min(MAX_PAYLOAD * seq, CHUNK_DATA_SIZE)]
+
 
 def get_receive_data(hashcode, seq):
     return ex_received_chunk[hashcode][MAX_PAYLOAD * (seq - 1):min(MAX_PAYLOAD * seq, CHUNK_DATA_SIZE)]
@@ -130,7 +145,6 @@ def process_download(sock, chunkfile, outputfile):
     global ex_output_file
     global ex_received_chunk
     global ex_downloading_chunkhash
-    global cwnd
     global base
     global next_seq_num
     global max_data_pkt_seq
@@ -151,6 +165,7 @@ def process_download(sock, chunkfile, outputfile):
     download_list = re.findall('.{40}', bytes.hex(download_hashes))
     # Step 3: send to every peer
     for peer in config.peers:
+        # noinspection PyShadowingBuiltins
         id = int(peer[0])
         ip = peer[1]
         port = int(peer[2])
@@ -161,7 +176,7 @@ def process_download(sock, chunkfile, outputfile):
 
 def process_inbound_udp(sock):
     # Receive pkt
-    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash
+    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, start_time, ex_downloading_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -176,6 +191,7 @@ def process_inbound_udp(sock):
         request_hashes = re.findall('.{40}', chunkhash_str)
         logger.info(f'收{from_addr} *WHOHAS* for {request_hashes}')
         logger.debug(f'{list(config.haschunks.keys())}')
+        # noinspection PyShadowingBuiltins
         for hash in request_hashes:
             if hash in list(config.haschunks.keys()):
                 ex_sending_chunkhash = hash
@@ -278,11 +294,11 @@ def process_inbound_udp(sock):
             else:
                 logger.warning('Example fails. Please check the example files carefully.')
 
-            logger.info('接收结束，断开所有连接，重置peer')
+            # logger.info('接收结束，断开所有连接')
             for peer in session_list.keys():
                 stop_pkt = P2pPacket.stop()
                 sock.sendto(stop_pkt, peer)
-            reset()
+            # reset()
     elif Type == ACK:
         print('')
         ack_num = Ack
@@ -292,7 +308,12 @@ def process_inbound_udp(sock):
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             logger.warning(f'对方ACK了所有pkt，应该结束传输')
             # 关闭所有的定时器
-            start_time = dict()
+            for addr, ack in start_time.keys():
+                if addr == from_addr:
+                    start_time.pop((addr, ack))
+            # start_time = dict()
+            logger.info('绘制cwnd')
+            fsm.cwnd_visualizer(config.identity)
             return
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
@@ -355,10 +376,9 @@ def process_inbound_udp(sock):
                     # 记录发送信息
                     logger.warning(f'快速重传时，发送data {i}')
             pass
-    elif Type == STOP:
-        logger.info('接收方接收完毕，重置peer')
-        fsm.cwnd_visualizer(config.identity)
-        reset()
+    # elif Type == STOP:
+    #     logger.info('绘制cwnd')
+    #     fsm.cwnd_visualizer(config.identity)
 
 
 def process_user_input(sock):
@@ -373,8 +393,8 @@ def check_timeout(sock):
     for key, start in start_time.items():
         addr, seq = key
         if time.time() - start > timeout_interval_of(addr):
+            logger.warning(f'超时重传 <{seq}>, 此时 Timeout = {timeout_interval_of(addr)}')
             fsm.update(Event.Timeout)
-            logger.warning(f"time out retransmission {seq}")
             before_send_data(addr, seq, un_acked_data_pkt_map[key])
             sock.sendto(un_acked_data_pkt_map[key], addr)
 

@@ -63,8 +63,8 @@ class FSM:
             pass
         elif trigger == Trigger.five:
             # self.cwnd = self.cwnd + (1 / self.cwnd)
-            # self.change_cwnd_to(self.cwnd + (1 / self.cwnd))
-            self.change_cwnd_to(self.cwnd + 1)
+            self.change_cwnd_to(self.cwnd + (1 / self.cwnd))
+            # self.change_cwnd_to(self.cwnd + 1)
         else:
             raise ValueError('No such trigger')
         self.state = FSM._TRANSITION[trigger]
