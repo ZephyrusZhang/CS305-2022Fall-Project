@@ -44,7 +44,6 @@ BETA = 0.25
 DEFAULT_TIMEOUT = 999_999_999  # 默认的超时时限
 INIT_ESTIMATED_RTT = 999_999_999
 INIT_DEV_RTT_BETA = 999_999_999
-b = True
 
 sending_map = dict()
 # key: addr
@@ -161,7 +160,7 @@ def process_download(sock, chunkfile, outputfile):
 
 def process_inbound_udp(sock):
     # Receive pkt
-    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map, b
+    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -221,11 +220,6 @@ def process_inbound_udp(sock):
             before_send_data(from_addr, i, data_pkt)
             sock.sendto(data_pkt, from_addr)
     elif Type == DATA:
-        # if b:
-        #     if Seq == 2:
-        #         b = False
-        #         return
-        #         # received a DATA pkt
 
         # 检查是否已经收完了来自这个peer的chunk
         if from_addr in receiving_map.keys():
