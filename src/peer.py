@@ -5,6 +5,7 @@ import sys
 from config import *
 from fsm import *
 from packet import P2pPacket
+from info import *
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
@@ -68,6 +69,7 @@ receiving_hash_set = set()
 #   1.移除该任务
 #   2.判断是否完成所有任务，如果是，清空receiving list，完成下载，生成文件
 
+
 def before_send_data(addr, seq, packet):
     """
         发送DATA包前调用该函数。用于开始RTT的测量等一系列事宜
@@ -120,9 +122,6 @@ def process_download(sock, chunkfile, outputfile):
     global ex_output_file
     global ex_received_chunk
     global ex_downloading_chunkhash
-    global base
-    global next_seq_num
-    global max_data_pkt_seq
 
     ex_output_file = outputfile
     # Step 1: read chunkhash to be downloaded from chunkfile
@@ -150,7 +149,7 @@ def process_download(sock, chunkfile, outputfile):
 
 def process_inbound_udp(sock):
     # Receive pkt
-    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map
+    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -177,26 +176,28 @@ def process_inbound_udp(sock):
         # see what chunk the sender has
         get_chunk_hash = data[:20]
         logger.info(f'收{from_addr} *IHAVE * for {bytes.hex(get_chunk_hash)}')
+
         # 加入到receive list, hash set
-        receiving_map[from_addr] = ()
         receiving_hash_set.add(bytes.hex(get_chunk_hash))
+        receiving_map[from_addr] = SenderInfo()
+        receiving_map[from_addr].downloading_hash = bytes.hex(get_chunk_hash)
+        receiving_map[from_addr].max_data_pkt_seq = 0
+
         # send back GET pkt
         get_pkt = P2pPacket.get(get_chunk_hash)
         logger.info(f'发{from_addr} *GET   * for {bytes.hex(get_chunk_hash)}')
         sock.sendto(get_pkt, from_addr)
-        # logger.warning(f'收到ihave，地址是{from_addr}，hash是{bytes.hex(get_chunk_hash)}')
-        # 初始化该地址的应该ack的seq的最大值
-        max_data_pkt_seq[from_addr] = 0
-
 
     elif Type == GET:
         # received a GET pkt
         hash = bytes.hex(pkt[HEADER_LEN:])
         logger.info(f'收{from_addr} *GET   * for {hash}')
         # 加入到发送列表中
-        sending_map[from_addr] = hash
+        sending_map[from_addr] = ReceiverInfo()
+
         # 直接发送 cwnd 个data pkt
-        ack_cnt_map[(from_addr, 0)] = 0
+        # sending_map[from_addr].ack_cnt[0] = 0
+        # ack_cnt_map[(from_addr, 0)] = 0
         for i in range(base, next_seq_num):
             chunk_data = get_chunk_data(ex_sending_chunkhash, i)
             data_pkt = P2pPacket.data(chunk_data, i)
@@ -208,19 +209,14 @@ def process_inbound_udp(sock):
             un_acked_data_pkt_map[(from_addr, i)] = data_pkt
 
     elif Type == DATA:
-        # if b:
-        #     if Seq == 1:
-        #         b = False
-        #         return
-        #         # received a DATA pkt
-
         # 顺序接收，最大seq号码加一，整理data加到收集中
-        if Seq == max_data_pkt_seq[from_addr] + 1:
+        if Seq == receiving_map[from_addr].max_data_pkt_seq + 1:
+            receiving_map[from_addr].max_data_pkt_seq += 1
 
-            max_data_pkt_seq[from_addr] += 1
             # 查session list中，用addr查询hash
-            ex_downloading_chunkhash = receiving_map[from_addr]
+            ex_downloading_chunkhash = receiving_map[from_addr].downloading_hash
             # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
+
             if data == get_receive_data(ex_downloading_chunkhash, Seq):
                 logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
                 return
@@ -236,9 +232,9 @@ def process_inbound_udp(sock):
         # 乱序接收，抛弃，ack最大seq号
         else:
             # 乱序data包，ack 需要的包的前一个
-            logger.warning(f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{max_data_pkt_seq[from_addr]}')
-            ack_pkt = P2pPacket.ack(max_data_pkt_seq[from_addr])
-            logger.info(f'发{from_addr} *ACK   * seq {max_data_pkt_seq[from_addr]}')
+            logger.warning(f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{receiving_map[from_addr].max_data_pkt_seq}')
+            ack_pkt = P2pPacket.ack(receiving_map[from_addr].max_data_pkt_seq)
+            logger.info(f'发{from_addr} *ACK   * seq {receiving_map[from_addr].max_data_pkt_seq}')
             sock.sendto(ack_pkt, from_addr)
 
         # see if finished
