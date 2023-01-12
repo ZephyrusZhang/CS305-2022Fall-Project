@@ -1,10 +1,9 @@
-import grader
+from test.tools import grader, concurrency_visualizer
 import time
 import pickle
 import hashlib
 import pytest
 import os
-import concurrency_visualizer
 
 '''
 This test examines the basic function of your concurrency.

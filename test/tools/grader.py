@@ -1,19 +1,16 @@
 import os
 import random
-import atexit
 import select
 from signal import signal
-import sys
 import checkersocket
 from threading import Thread
 import subprocess
 import time
 import signal
 import queue
-from concurrent.futures import ThreadPoolExecutor
 import logging
 
-os.chdir(os.path.join(os.path.dirname(__file__), ".."))
+os.chdir(os.path.join(os.path.dirname(__file__), "../.."))
 
 
 class PeerProc:

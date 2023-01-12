@@ -1,4 +1,4 @@
-import grader
+from test.tools import grader
 import time
 import pytest
 import pickle
