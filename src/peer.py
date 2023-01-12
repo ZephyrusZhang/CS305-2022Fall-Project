@@ -32,9 +32,6 @@ logger = get_logger(__name__)
 # types
 types = ['WHOHAS', 'IHAVE', 'GET', 'DATA', 'ACK', 'DENIED']
 
-ack_cnt_map = {}
-un_acked_data_pkt_map = {}
-
 # 发送data的时候
 #   1.在ack_cnt_map中记录{(addr,seq):0}
 #   2.在un_acked_data_pkt_map中记录{(addr,seq):pkt}
@@ -42,37 +39,34 @@ un_acked_data_pkt_map = {}
 #   1.在un_acked_data_pkt_map中删除{(addr,seq):pkt}
 #   2.查看在ack_cnt_map中记录的{(addr,seq):cnt}（如果大于等于3的话，重新传下一个，cnt重置成1，如果没超过的话，cnt+1）
 
-ESTIMATED_RTT = dict()
-DEV_RTT = dict()
 ALPHA = 0.125
 BETA = 0.25
 DEFAULT_TIMEOUT = 999_999_999  # 默认的超时时限
 INIT_ESTIMATED_RTT = 999_999_999
 INIT_DEV_RTT_BETA = 999_999_999
 
-start_time = dict()  # 用于记录测量RTT时的开始时间
+sending_map = dict()
+# key: addr
+# val: receiver_info
+# (
+# hash, base, next_seq_num, fsm, ESTIMATED_RTT, DEV_RTT
+# ack_cnt{seq;num}, un_acked_data_pkt{seq:pkt}, timers{seq:time}
+# )
+# 收到第一个GET的时候，加入
+# 收到最后一个ACK的时候，移除
+receiving_map = dict()
+# key: addr
+# val: { hash, max_data_pkt_seq }
+# 收到IHAVE的时候，加入
+# 收到顺序到来的最后一个DATA的时候，移除
 
-fsm = FSM()
-
-# cwnd = 5
-base = 1  # 发送窗口的起点
-next_seq_num = base + fsm.get_cwnd()  # 发送窗口的重终点的下一个
-
-# 接收方收到最大的max_data_pkt_seq, key是from_addr, value是 seq
-max_data_pkt_seq = dict()
-
-b = True
-
-sending_list = dict()
-# 收到GET的时候，将这(addr:hash)加到sending list
-# 收到最后一个ack的时候，将(addr:hash)从list中移除
-receiving_list = dict()
-# 收到IHAVE的时候，将(addr:hash)加入到receiving list
-# 收到顺序到来的最后一个data包的时候，将(addr:hash)从list中移除
-# 每次收到顺序到来的最后一个包的时候，遍历 receiving list 的 hashs
-# 如果所有的hash都已经完成了，就清空receiving list
+# receiving hash set存放作为接收方，正在下载的所有任务，用于判断是否完成下载并生成文件
 receiving_hash_set = set()
-
+# val: hash
+# 在收到IHAVE的时候，加入
+# 收到一个完整的包的时候
+#   1.移除该任务
+#   2.判断是否完成所有任务，如果是，清空receiving list，完成下载，生成文件
 
 def before_send_data(addr, seq, packet):
     """
@@ -156,7 +150,7 @@ def process_download(sock, chunkfile, outputfile):
 
 def process_inbound_udp(sock):
     # Receive pkt
-    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash, receiving_list, receiving_hash_set, sending_list
+    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -184,7 +178,7 @@ def process_inbound_udp(sock):
         get_chunk_hash = data[:20]
         logger.info(f'收{from_addr} *IHAVE * for {bytes.hex(get_chunk_hash)}')
         # 加入到receive list, hash set
-        receiving_list[from_addr] = bytes.hex(get_chunk_hash)
+        receiving_map[from_addr] = ()
         receiving_hash_set.add(bytes.hex(get_chunk_hash))
         # send back GET pkt
         get_pkt = P2pPacket.get(get_chunk_hash)
@@ -200,7 +194,7 @@ def process_inbound_udp(sock):
         hash = bytes.hex(pkt[HEADER_LEN:])
         logger.info(f'收{from_addr} *GET   * for {hash}')
         # 加入到发送列表中
-        sending_list[from_addr] = hash
+        sending_map[from_addr] = hash
         # 直接发送 cwnd 个data pkt
         ack_cnt_map[(from_addr, 0)] = 0
         for i in range(base, next_seq_num):
@@ -222,13 +216,10 @@ def process_inbound_udp(sock):
 
         # 顺序接收，最大seq号码加一，整理data加到收集中
         if Seq == max_data_pkt_seq[from_addr] + 1:
-            # send back ACK
-            ack_pkt = P2pPacket.ack(Seq)
-            logger.info(f'发{from_addr} *ACK   * seq {Seq}')
-            sock.sendto(ack_pkt, from_addr)
+
             max_data_pkt_seq[from_addr] += 1
             # 查session list中，用addr查询hash
-            ex_downloading_chunkhash = receiving_list[from_addr]
+            ex_downloading_chunkhash = receiving_map[from_addr]
             # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
             if data == get_receive_data(ex_downloading_chunkhash, Seq):
                 logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
@@ -237,6 +228,10 @@ def process_inbound_udp(sock):
                 logger.warning('第一次收到了这个hash-seq的data，加到下载文件的末尾')
                 ex_received_chunk[ex_downloading_chunkhash] += data
                 logger.info(f'收{from_addr} *DATA  * seq {Seq}')
+                # send back ACK
+                ack_pkt = P2pPacket.ack(Seq)
+                logger.info(f'发{from_addr} *ACK   * seq {Seq}')
+                sock.sendto(ack_pkt, from_addr)
 
         # 乱序接收，抛弃，ack最大seq号
         else:
@@ -249,7 +244,7 @@ def process_inbound_udp(sock):
         # see if finished
         if len(ex_received_chunk[ex_downloading_chunkhash]) == CHUNK_DATA_SIZE:
             # 从receiving list中移除这个任务
-            receiving_list.pop(from_addr)
+            receiving_map.pop(from_addr)
             receiving_hash_set.remove(ex_downloading_chunkhash)
             # finished downloading this chunkdata!
             # dump your received chunk to file in dict form using pickle
@@ -275,14 +270,15 @@ def process_inbound_udp(sock):
             # 检查下载任务是否全部完成，只有完成了所有下载，才能生成result文件
             if len(receiving_hash_set) == 0:
                 logger.info(f'完成了所有下载，生成文件')
-                receiving_list = dict()
+                receiving_map = dict()
+
                 with open(ex_output_file, "wb") as wf:
                     pickle.dump(ex_received_chunk, wf)
                 # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
                 logger.info(f'GOT {ex_output_file}')
                 pass
             else:
-                logger.info(f'完成了部分下载，剩余任务为{receiving_list}')
+                logger.info(f'完成了部分下载，剩余任务为{receiving_map}')
                 pass
 
     elif Type == ACK:
@@ -294,8 +290,8 @@ def process_inbound_udp(sock):
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             logger.warning(f'{from_addr} ACK了所有pkt，应该结束传输')
             # 将这个人从sending list中移除
-            sending_list.pop(from_addr)
-            logger.warning(f'剩余发送任务为{sending_list}')
+            sending_map.pop(from_addr)
+            logger.warning(f'剩余发送任务为{sending_map}')
             # 关闭所有的定时器
             start_time = dict()
             return
@@ -420,7 +416,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', type=int, help='<maxconn>      Max # of concurrent sending')
     parser.add_argument('-i', type=int, help='<identity>     Which peer # am I?')
     parser.add_argument('-v', type=int, help='verbose level', default=0)
-    parser.add_argument('-t', type=int, help="pre-defined timeout", default=999_999_999)
+    parser.add_argument('-t', type=int, help="pre-defined timeout", default=1)
     args = parser.parse_args()
 
     config = bt_utils.BtConfig(args)
