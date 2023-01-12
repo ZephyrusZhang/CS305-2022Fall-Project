@@ -315,6 +315,7 @@ def process_inbound_udp(sock):
             logger.warning(f'剩余发送任务为{sending_map}')
             # 关闭所有的定时器
             receiver.timers = dict()
+            receiver.fsm.cwnd_visualizer(config.identity)
             return
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
