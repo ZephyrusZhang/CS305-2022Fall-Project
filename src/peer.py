@@ -32,11 +32,6 @@ logger = get_logger(__name__)
 # types
 types = ['WHOHAS', 'IHAVE', 'GET', 'DATA', 'ACK', 'DENIED']
 
-# TODO: 通过维护session list来和不同peer通信
-# session list 里面存的是(地址：20位hash)的dictionary
-# 方便后面每次收到一个包的时候，从地址-->hash-->分段data
-session_list = dict()
-
 ack_cnt_map = {}
 un_acked_data_pkt_map = {}
 
@@ -63,10 +58,20 @@ fsm = FSM()
 base = 1  # 发送窗口的起点
 next_seq_num = base + fsm.get_cwnd()  # 发送窗口的重终点的下一个
 
-# 接收方收到最大的max_data_pkt_seq, key是from_addr,value是 seq
+# 接收方收到最大的max_data_pkt_seq, key是from_addr, value是 seq
 max_data_pkt_seq = dict()
 
 b = True
+
+sending_list = dict()
+# 收到GET的时候，将这(addr:hash)加到sending list
+# 收到最后一个ack的时候，将(addr:hash)从list中移除
+receiving_list = dict()
+# 收到IHAVE的时候，将(addr:hash)加入到receiving list
+# 收到顺序到来的最后一个data包的时候，将(addr:hash)从list中移除
+# 每次收到顺序到来的最后一个包的时候，遍历 receiving list 的 hashs
+# 如果所有的hash都已经完成了，就清空receiving list
+receiving_hash_set = set()
 
 
 def before_send_data(addr, seq, packet):
@@ -89,6 +94,7 @@ def before_send_data(addr, seq, packet):
 
 def get_chunk_data(hashcode, seq):
     return config.haschunks[hashcode][MAX_PAYLOAD * (seq - 1):min(MAX_PAYLOAD * seq, CHUNK_DATA_SIZE)]
+
 
 def get_receive_data(hashcode, seq):
     return ex_received_chunk[hashcode][MAX_PAYLOAD * (seq - 1):min(MAX_PAYLOAD * seq, CHUNK_DATA_SIZE)]
@@ -120,7 +126,6 @@ def process_download(sock, chunkfile, outputfile):
     global ex_output_file
     global ex_received_chunk
     global ex_downloading_chunkhash
-    global cwnd
     global base
     global next_seq_num
     global max_data_pkt_seq
@@ -151,7 +156,7 @@ def process_download(sock, chunkfile, outputfile):
 
 def process_inbound_udp(sock):
     # Receive pkt
-    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash
+    global config, ex_sending_chunkhash, base, next_seq_num, max_data_pkt_seq, b, start_time, ex_downloading_chunkhash, receiving_list, receiving_hash_set, sending_list
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -178,22 +183,24 @@ def process_inbound_udp(sock):
         # see what chunk the sender has
         get_chunk_hash = data[:20]
         logger.info(f'收{from_addr} *IHAVE * for {bytes.hex(get_chunk_hash)}')
+        # 加入到receive list, hash set
+        receiving_list[from_addr] = bytes.hex(get_chunk_hash)
+        receiving_hash_set.add(bytes.hex(get_chunk_hash))
         # send back GET pkt
         get_pkt = P2pPacket.get(get_chunk_hash)
         logger.info(f'发{from_addr} *GET   * for {bytes.hex(get_chunk_hash)}')
         sock.sendto(get_pkt, from_addr)
-        # 在这里加入session list
-        session_list[from_addr] = bytes.hex(get_chunk_hash)
         # logger.warning(f'收到ihave，地址是{from_addr}，hash是{bytes.hex(get_chunk_hash)}')
-        # logger.warning(session_list)
         # 初始化该地址的应该ack的seq的最大值
         max_data_pkt_seq[from_addr] = 0
 
 
     elif Type == GET:
         # received a GET pkt
-        logger.info(f'收{from_addr} *GET   * for {bytes.hex(pkt[HEADER_LEN:])}')
-
+        hash = bytes.hex(pkt[HEADER_LEN:])
+        logger.info(f'收{from_addr} *GET   * for {hash}')
+        # 加入到发送列表中
+        sending_list[from_addr] = hash
         # 直接发送 cwnd 个data pkt
         ack_cnt_map[(from_addr, 0)] = 0
         for i in range(base, next_seq_num):
@@ -221,7 +228,7 @@ def process_inbound_udp(sock):
             sock.sendto(ack_pkt, from_addr)
             max_data_pkt_seq[from_addr] += 1
             # 查session list中，用addr查询hash
-            ex_downloading_chunkhash = session_list[from_addr]
+            ex_downloading_chunkhash = receiving_list[from_addr]
             # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
             if data == get_receive_data(ex_downloading_chunkhash, Seq):
                 logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
@@ -241,17 +248,13 @@ def process_inbound_udp(sock):
 
         # see if finished
         if len(ex_received_chunk[ex_downloading_chunkhash]) == CHUNK_DATA_SIZE:
+            # 从receiving list中移除这个任务
+            receiving_list.pop(from_addr)
+            receiving_hash_set.remove(ex_downloading_chunkhash)
             # finished downloading this chunkdata!
             # dump your received chunk to file in dict form using pickle
-            with open(ex_output_file, "wb") as wf:
-                pickle.dump(ex_received_chunk, wf)
 
-            # add to this peer's haschunk:
-            config.haschunks[ex_downloading_chunkhash] = ex_received_chunk[ex_downloading_chunkhash]
-
-            # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
-            logger.info(f'GOT {ex_output_file}')
-
+            # 比对这个hash是不是对的
             # The following things are just for illustration, you do not need to print out in your design.
             sha1 = hashlib.sha1()
             sha1.update(ex_received_chunk[ex_downloading_chunkhash])
@@ -261,10 +264,27 @@ def process_inbound_udp(sock):
             success = ex_downloading_chunkhash == received_chunkhash_str
             logger.info(f'Successful received: {success}')
             if success:
-                logger.info('Congrats! You have completed the example!')
+                logger.info(f'Congrats! You have receive the right data for {received_chunkhash_str}')
             else:
-                logger.warning('Example fails. Please check the example files carefully.')
-            fsm.cwnd_visualizer(config.identity)
+                logger.warning(f'Fail! You have receive the wrong data for {received_chunkhash_str}')
+            # fsm.cwnd_visualizer(config.identity)
+
+            # add to this peer's haschunk:
+            config.haschunks[ex_downloading_chunkhash] = ex_received_chunk[ex_downloading_chunkhash]
+
+            # 检查下载任务是否全部完成，只有完成了所有下载，才能生成result文件
+            if len(receiving_hash_set) == 0:
+                logger.info(f'完成了所有下载，生成文件')
+                receiving_list = dict()
+                with open(ex_output_file, "wb") as wf:
+                    pickle.dump(ex_received_chunk, wf)
+                # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
+                logger.info(f'GOT {ex_output_file}')
+                pass
+            else:
+                logger.info(f'完成了部分下载，剩余任务为{receiving_list}')
+                pass
+
     elif Type == ACK:
         print('')
         ack_num = Ack
@@ -272,7 +292,10 @@ def process_inbound_udp(sock):
 
         # 第零件事，判断一下是否对方已经接收了ack了所有的pkt
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
-            logger.warning(f'对方ACK了所有pkt，应该结束传输')
+            logger.warning(f'{from_addr} ACK了所有pkt，应该结束传输')
+            # 将这个人从sending list中移除
+            sending_list.pop(from_addr)
+            logger.warning(f'剩余发送任务为{sending_list}')
             # 关闭所有的定时器
             start_time = dict()
             return

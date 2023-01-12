@@ -31,5 +31,5 @@ run peer 3
 cd ..
 export SIMULATOR="127.0.0.1:12345"
 clear
-python3 src/peer.py -p test/tmp4/nodes4.map -c test/tmp4/data4-3.fragment -m 100 -i 3
+python3 src/peer.py -p test/tmp4/nodes4.map -c test/tmp4/data4-2.fragment -m 100 -i 3
 ```
