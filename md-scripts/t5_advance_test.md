@@ -10,6 +10,7 @@ kill -9 $(lsof -i:48007|awk '{print $2}'|tail -n 1)
 kill -9 $(lsof -i:48008|awk '{print $2}'|tail -n 1)
 cd ..
 clear
+mkdir test/tmp5/results
 perl util/hupsim.pl -m test/tmp5/topo5.map -n test/tmp5/nodes5.map -p 12345 -v 3
 ```
 

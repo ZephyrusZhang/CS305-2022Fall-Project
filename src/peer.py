@@ -224,11 +224,11 @@ def process_inbound_udp(sock):
 
 
     elif Type == DATA:
-        if b:
-            if Seq == 2:
-                b = False
-                return
-                # received a DATA pkt
+        # if b:
+        #     if Seq == 2:
+        #         b = False
+        #         return
+        #         # received a DATA pkt
 
         # 顺序接收，最大seq号码加一，整理data加到收集中
         if Seq == receiving_map[from_addr].max_data_pkt_seq + 1:
@@ -240,15 +240,14 @@ def process_inbound_udp(sock):
 
             if data == get_receive_data(ex_downloading_chunkhash, Seq):
                 logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
-                return
             else:
                 logger.warning('第一次收到了这个hash-seq的data，加到下载文件的末尾')
                 ex_received_chunk[ex_downloading_chunkhash] += data
                 logger.info(f'收{from_addr} *DATA  * seq {Seq}')
-                # send back ACK
-                ack_pkt = P2pPacket.ack(Seq)
-                logger.info(f'发{from_addr} *ACK   * seq {Seq}')
-                sock.sendto(ack_pkt, from_addr)
+            # send back ACK
+            ack_pkt = P2pPacket.ack(Seq)
+            logger.info(f'发{from_addr} *ACK   * seq {Seq}')
+            sock.sendto(ack_pkt, from_addr)
 
         # 乱序接收，抛弃，ack最大seq号
         else:
@@ -305,8 +304,6 @@ def process_inbound_udp(sock):
         receiver = sending_map[from_addr]
         fsm = receiver.fsm
         fsm.update(Event.NewAck)
-        sample_rtt = time.time() - receiver.timers[ack_num]
-        update_rtt(from_addr, sample_rtt)
         # 查出来现在的窗口
         # base = receiver.base
         # next_seq_num = receiver.next_seq_num
@@ -331,6 +328,9 @@ def process_inbound_udp(sock):
                 # 先ack它
                 receiver.ack_cnt[ack_num] += 1
                 receiver.un_acked_data_pkt.pop(ack_num)
+                # 更新rtt
+                sample_rtt = time.time() - receiver.timers[ack_num]
+                update_rtt(from_addr, sample_rtt)
                 # 关闭这个data包的定时器
                 receiver.timers.pop(ack_num)
                 # 更新窗口
