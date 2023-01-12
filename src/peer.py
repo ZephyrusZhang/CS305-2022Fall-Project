@@ -208,12 +208,13 @@ def process_inbound_udp(sock):
         # 加入到发送列表中
         receiver = ReceiverInfo()
         sending_map[from_addr] = receiver
+        receiver.sending_hash = hash
         # 查出来现在的窗口
         base = receiver.base
         next_seq_num = receiver.next_seq_num
         # 直接发送 cwnd 个data pkt
         for i in range(base, next_seq_num):
-            chunk_data = get_chunk_data(ex_sending_chunkhash, i)
+            chunk_data = get_chunk_data(hash, i)
             data_pkt = P2pPacket.data(chunk_data, i)
             logger.info(f'发{from_addr} *DATA  * seq {i}')
             # 发送之前处理一下，方便收到ack的时候测量rtt
@@ -318,6 +319,9 @@ def process_inbound_udp(sock):
             receiver.timers = dict()
             receiver.fsm.cwnd_visualizer(config.identity)
             return
+
+        if from_addr in sending_map.keys():
+            ex_sending_chunkhash = sending_map[from_addr].sending_hash
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
         logger.warning(
