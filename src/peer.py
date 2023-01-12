@@ -160,9 +160,8 @@ def process_download(sock, chunkfile, outputfile):
 
 
 def process_inbound_udp(sock):
-
     # Receive pkt
-    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map,b
+    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map, b
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
@@ -202,7 +201,6 @@ def process_inbound_udp(sock):
         get_pkt = P2pPacket.get(get_chunk_hash)
         logger.info(f'发{from_addr} *GET   * for {bytes.hex(get_chunk_hash)}')
         sock.sendto(get_pkt, from_addr)
-
     elif Type == GET:
         # received a GET pkt
         hash = bytes.hex(pkt[HEADER_LEN:])
@@ -221,8 +219,6 @@ def process_inbound_udp(sock):
             # 发送之前处理一下，方便收到ack的时候测量rtt
             before_send_data(from_addr, i, data_pkt)
             sock.sendto(data_pkt, from_addr)
-
-
     elif Type == DATA:
         # if b:
         #     if Seq == 2:
@@ -230,33 +226,37 @@ def process_inbound_udp(sock):
         #         return
         #         # received a DATA pkt
 
-        # 顺序接收，最大seq号码加一，整理data加到收集中
-        if Seq == receiving_map[from_addr].max_data_pkt_seq + 1:
-            receiving_map[from_addr].max_data_pkt_seq += 1
-
-            # 查session list中，用addr查询hash
+        # 检查是否已经收完了来自这个peer的chunk
+        if from_addr in receiving_map.keys():
             ex_downloading_chunkhash = receiving_map[from_addr].downloading_hash
-            # logger.warning(f'收到从{from_addr}的分段{ex_downloading_chunkhash}')
-
-            if data == get_receive_data(ex_downloading_chunkhash, Seq):
-                logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
-            else:
-                logger.warning('第一次收到了这个hash-seq的data，加到下载文件的末尾')
-                ex_received_chunk[ex_downloading_chunkhash] += data
-                logger.info(f'收{from_addr} *DATA  * seq {Seq}')
-            # send back ACK
-            ack_pkt = P2pPacket.ack(Seq)
-            logger.info(f'发{from_addr} *ACK   * seq {Seq}')
-            sock.sendto(ack_pkt, from_addr)
-
-        # 乱序接收，抛弃，ack最大seq号
-        else:
-            # 乱序data包，ack 需要的包的前一个
-            logger.warning(
-                f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{receiving_map[from_addr].max_data_pkt_seq}')
-            ack_pkt = P2pPacket.ack(receiving_map[from_addr].max_data_pkt_seq)
-            logger.info(f'发{from_addr} *ACK   * seq {receiving_map[from_addr].max_data_pkt_seq}')
-            sock.sendto(ack_pkt, from_addr)
+            # 检查data seq的位置
+            # 1.比该收到的seq小
+            if Seq < receiving_map[from_addr].max_data_pkt_seq + 1:
+                # send back ACK
+                ack_pkt = P2pPacket.ack(Seq)
+                logger.info(f'发{from_addr} *ACK   * seq {Seq}')
+                sock.sendto(ack_pkt, from_addr)
+            # 2.等于该收到的seq
+            if Seq == receiving_map[from_addr].max_data_pkt_seq + 1:
+                ex_downloading_chunkhash = receiving_map[from_addr].downloading_hash
+                if data == get_receive_data(ex_downloading_chunkhash, Seq):
+                    logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
+                else:
+                    logger.warning('第一次收到了这个hash-seq的data，加到下载文件的末尾')
+                    ex_received_chunk[ex_downloading_chunkhash] += data
+                    logger.info(f'收{from_addr} *DATA  * seq {Seq}')
+                # send back ACK
+                ack_pkt = P2pPacket.ack(Seq)
+                logger.info(f'发{from_addr} *ACK   * seq {Seq}')
+                sock.sendto(ack_pkt, from_addr)
+            # 3.大于该收到的seq
+            if Seq > receiving_map[from_addr].max_data_pkt_seq + 1:
+                # 乱序data包，ack 需要的包的前一个
+                logger.warning(
+                    f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{receiving_map[from_addr].max_data_pkt_seq}')
+                ack_pkt = P2pPacket.ack(receiving_map[from_addr].max_data_pkt_seq)
+                logger.info(f'发{from_addr} *ACK   * seq {receiving_map[from_addr].max_data_pkt_seq}')
+                sock.sendto(ack_pkt, from_addr)
 
         # see if finished
         if len(ex_received_chunk[ex_downloading_chunkhash]) == CHUNK_DATA_SIZE:
@@ -274,7 +274,7 @@ def process_inbound_udp(sock):
             logger.info(f'Expected chunkhash: {ex_downloading_chunkhash}')
             logger.info(f'Received chunkhash: {received_chunkhash_str}')
             success = ex_downloading_chunkhash == received_chunkhash_str
-            logger.info(f'Successful received: {success}')
+            logger.info(f'是否成功下载： {success}')
             if success:
                 logger.info(f'Congrats! You have receive the right data for {received_chunkhash_str}')
             else:
@@ -297,7 +297,6 @@ def process_inbound_udp(sock):
             else:
                 logger.info(f'完成了部分下载，剩余任务为{receiving_map}')
                 pass
-
     elif Type == ACK:
         ack_num = Ack
         # 先搞清楚这个ack从那里来的，receiver是谁
@@ -319,7 +318,8 @@ def process_inbound_udp(sock):
             return
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
-        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
+        logger.warning(
+            f'收到了ACK {ack_num}，当前窗口是[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
         # 在窗口内，检查是否是base
         if ack_num in range(receiver.base, receiver.next_seq_num):
             # print('在窗口内')
@@ -340,7 +340,8 @@ def process_inbound_udp(sock):
                 # 所以 (next_seq_num - 1) * MAX_PAYLOAD 不能大于 CHUNK_DATA_SIZE
                 while (receiver.next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
                     receiver.next_seq_num -= 1
-                logger.warning(f'**更新** 窗口为[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
+                logger.warning(
+                    f'**更新** 窗口为[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
                 # 更新窗口之后，检查窗口内是否有没有 被发出去的分组
                 # 在窗口里，就是in range(base, next_seq_num)
                 # 没有发出去，就是不在un_acked_data_pkt_map里面
@@ -359,7 +360,8 @@ def process_inbound_udp(sock):
 
             # 如果不是base，直接抛弃这个ack
             else:
-                logger.warning(f'**抛弃** 窗口为[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
+                logger.warning(
+                    f'**抛弃** 窗口为[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
 
         # 如果不在窗口里面，先ack它，再检查是否是ack 3次，需要重新传
         else:
