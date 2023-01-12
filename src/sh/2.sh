@@ -1,5 +1,6 @@
-echo -n -e "\033]0;2\007"
+echo -n -e "\033]0;Peer2\007"
 cd $(dirname "$0")/../..
 export SIMULATOR="127.0.0.1:12345"
-python3 src/peer.py -p test/tmp5/nodes5.map -c test/tmp5/fragments/data5-2.fragment -m 100 -i 2
-#DOWNLOAD test/tmp5/targets/download.chunkhash test/tmp5/results/result3.fragment
+clear
+#2 45acace8e984465459c893197e593c36daf653db
+python3 src/peer.py -p example/ex_nodes_map -c example/data2.fragment -m 1 -i 2 -v 2

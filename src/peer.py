@@ -1,10 +1,8 @@
-import logging
 import os
 import re
 import sys
 
 from config import *
-from formatter import *
 from fsm import *
 from packet import P2pPacket
 
@@ -280,7 +278,7 @@ def process_inbound_udp(sock):
             return
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
-        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{base}-{next_seq_num - 1}]({next_seq_num-base})')
+        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{base}-{next_seq_num - 1}]({next_seq_num - base})')
         # 在窗口内，检查是否是base
         if ack_num in range(base, next_seq_num):
             # print('在窗口内')
@@ -298,7 +296,7 @@ def process_inbound_udp(sock):
                 # 所以 (next_seq_num - 1) * MAX_PAYLOAD 不能大于 CHUNK_DATA_SIZE
                 while (next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
                     next_seq_num -= 1
-                logger.warning(f'**更新** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num-base})')
+                logger.warning(f'**更新** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num - base})')
 
                 # 更新窗口之后，检查窗口内是否有没有 被发出去的分组
                 # 在窗口里，就是in range(base, next_seq_num)
@@ -318,7 +316,7 @@ def process_inbound_udp(sock):
 
             # 如果不是base，直接抛弃这个ack
             else:
-                logger.warning(f'**抛弃** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num-base})')
+                logger.warning(f'**抛弃** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num - base})')
 
         # 如果不在窗口里面，先ack它，再检查是否是ack 3次，需要重新传
         else:

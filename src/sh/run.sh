@@ -24,8 +24,4 @@ open -a terminal.app $(dirname "$0")/simulator.sh
 open -a terminal.app $(dirname "$0")/1.sh
 open -a terminal.app $(dirname "$0")/2.sh
 open -a terminal.app $(dirname "$0")/3.sh
-#open -a terminal.app $(dirname "$0")/peer4.sh
-#open -a terminal.app $(dirname "$0")/peer5.sh
-#open -a terminal.app $(dirname "$0")/peer6.sh
-#open -a terminal.app $(dirname "$0")/peer7.sh
-#open -a terminal.app $(dirname "$0")/peer8.sh
+open -a terminal.app $(dirname "$0")/4.sh

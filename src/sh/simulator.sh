@@ -1,4 +1,4 @@
 echo -n -e "\033]0;Simulator\007"
 cd $(dirname "$0")/../..
 clear
-perl util/hupsim.pl -m test/tmp5/topo5.map -n test/tmp5/nodes5.map -p 12345 -v 3
+perl util/hupsim.pl -m example/ex_topo.map -n example/ex_nodes_map -p 12345 -v 2
