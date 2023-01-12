@@ -1,4 +1,4 @@
-from test.tools import grader
+import grader
 import time
 import pickle
 import hashlib

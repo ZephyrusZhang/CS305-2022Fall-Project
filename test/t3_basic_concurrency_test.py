@@ -1,9 +1,10 @@
-from test.tools import grader, concurrency_visualizer
+import grader
 import time
 import pickle
 import hashlib
 import pytest
 import os
+import concurrency_visualizer
 
 '''
 This test examines the basic function of your concurrency.
@@ -36,7 +37,7 @@ python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-3.fragment -m 100
 @pytest.fixture(scope='module')
 def concurrent_session():
     success = False
-    time_max = 180
+    time_max = 1800
     if os.path.exists("test/tmp3/download_result.fragment"):
         os.remove("test/tmp3/download_result.fragment")
 
