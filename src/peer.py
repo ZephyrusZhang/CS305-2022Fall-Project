@@ -238,6 +238,7 @@ def process_inbound_udp(sock):
                 sock.sendto(ack_pkt, from_addr)
             # 2.等于该收到的seq
             if Seq == receiving_map[from_addr].max_data_pkt_seq + 1:
+                receiving_map[from_addr].max_data_pkt_seq += 1
                 ex_downloading_chunkhash = receiving_map[from_addr].downloading_hash
                 if data == get_receive_data(ex_downloading_chunkhash, Seq):
                     logger.warning('已经从别的peer那里收到了这个hash-seq的data，直接抛弃')
