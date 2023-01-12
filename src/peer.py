@@ -3,9 +3,8 @@ import re
 import sys
 
 from config import *
-from fsm import *
-from packet import P2pPacket
 from info import *
+from packet import P2pPacket
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
@@ -45,6 +44,7 @@ BETA = 0.25
 DEFAULT_TIMEOUT = 999_999_999  # 默认的超时时限
 INIT_ESTIMATED_RTT = 999_999_999
 INIT_DEV_RTT_BETA = 999_999_999
+b = True
 
 sending_map = dict()
 # key: addr
@@ -63,6 +63,8 @@ receiving_map = dict()
 
 # receiving hash set存放作为接收方，正在下载的所有任务，用于判断是否完成下载并生成文件
 receiving_hash_set = set()
+
+
 # val: hash
 # 在收到IHAVE的时候，加入
 # 收到一个完整的包的时候
@@ -83,9 +85,11 @@ def before_send_data(addr, seq, packet):
         packet : bytes
             要发的包
     """
-    start_time[(addr, seq)] = time.time()
-    ack_cnt_map[(addr, seq)] = 0
-    un_acked_data_pkt_map[(addr, seq)] = packet
+    receiver = sending_map[addr]
+    receiver.timers[seq] = time.time()
+    # 处理一下这些包的ack cnt和存档pkt
+    receiver.ack_cnt[seq] = 0
+    receiver.un_acked_data_pkt[seq] = packet
 
 
 def get_chunk_data(hashcode, seq):
@@ -97,21 +101,29 @@ def get_receive_data(hashcode, seq):
 
 
 def update_rtt(addr, sample_rtt):
-    if addr in ESTIMATED_RTT.keys():
-        assert addr in DEV_RTT.keys()
-        ESTIMATED_RTT[addr] = (1 - ALPHA) * ESTIMATED_RTT[addr] + ALPHA * sample_rtt
-        DEV_RTT[addr] = (1 - BETA) * DEV_RTT[addr] + BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
-        logger.debug(f'更新到 {addr} EstimatedRTT={ESTIMATED_RTT[addr]}, DevRTT={DEV_RTT[addr]}')
+    receiver = sending_map[addr]
+    ESTIMATED_RTT = receiver.estimated_rtt
+    DEV_RTT = receiver.dev_rtt
+    if ESTIMATED_RTT != 999_999_999:
+        if DEV_RTT != 999_999_999:
+            ESTIMATED_RTT = (1 - ALPHA) * ESTIMATED_RTT + ALPHA * sample_rtt
+            DEV_RTT = (1 - BETA) * DEV_RTT + BETA * abs(sample_rtt - ESTIMATED_RTT)
+            logger.debug(f'更新到 {addr} EstimatedRTT={ESTIMATED_RTT}, DevRTT={DEV_RTT}')
     else:
-        ESTIMATED_RTT[addr] = (1 - ALPHA) * INIT_ESTIMATED_RTT + ALPHA * sample_rtt
-        DEV_RTT[addr] = (1 - BETA) * INIT_DEV_RTT_BETA * abs(sample_rtt - ESTIMATED_RTT[addr])
+        ESTIMATED_RTT = (1 - ALPHA) * INIT_ESTIMATED_RTT + ALPHA * sample_rtt
+        DEV_RTT = (1 - BETA) * INIT_DEV_RTT_BETA * abs(sample_rtt - ESTIMATED_RTT)
+    receiver.estimated_rtt = ESTIMATED_RTT
+    receiver.dev_rtt = DEV_RTT
 
 
 def timeout_interval_of(addr) -> float:
     if config.timeout != 999_999_999: return config.timeout
-    if addr in ESTIMATED_RTT.keys():
-        assert addr in DEV_RTT.keys()
-        return ESTIMATED_RTT[addr] + 4 * DEV_RTT[addr]
+    receiver = sending_map[addr]
+    ESTIMATED_RTT = receiver.estimated_rtt
+    DEV_RTT = receiver.dev_rtt
+    if ESTIMATED_RTT != 999_999_999:
+        if DEV_RTT != 999_999_999:
+            return ESTIMATED_RTT + 4 * DEV_RTT
     return DEFAULT_TIMEOUT
 
 
@@ -148,12 +160,15 @@ def process_download(sock, chunkfile, outputfile):
 
 
 def process_inbound_udp(sock):
+
     # Receive pkt
-    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map
+    global config, ex_sending_chunkhash, ex_downloading_chunkhash, receiving_map, receiving_hash_set, sending_map,b
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PACKET_FORMAT, pkt[:HEADER_LEN])
     data = pkt[HEADER_LEN:]
+    # print(config.timeout)
+    # print(timeout_interval_of(from_addr))
     if Type == WHOHAS:
         # received an WHOHAS pkt
         # see what chunk the sender has
@@ -193,11 +208,12 @@ def process_inbound_udp(sock):
         hash = bytes.hex(pkt[HEADER_LEN:])
         logger.info(f'收{from_addr} *GET   * for {hash}')
         # 加入到发送列表中
-        sending_map[from_addr] = ReceiverInfo()
-
+        receiver = ReceiverInfo()
+        sending_map[from_addr] = receiver
+        # 查出来现在的窗口
+        base = receiver.base
+        next_seq_num = receiver.next_seq_num
         # 直接发送 cwnd 个data pkt
-        # sending_map[from_addr].ack_cnt[0] = 0
-        # ack_cnt_map[(from_addr, 0)] = 0
         for i in range(base, next_seq_num):
             chunk_data = get_chunk_data(ex_sending_chunkhash, i)
             data_pkt = P2pPacket.data(chunk_data, i)
@@ -205,10 +221,15 @@ def process_inbound_udp(sock):
             # 发送之前处理一下，方便收到ack的时候测量rtt
             before_send_data(from_addr, i, data_pkt)
             sock.sendto(data_pkt, from_addr)
-            ack_cnt_map[(from_addr, i)] = 0
-            un_acked_data_pkt_map[(from_addr, i)] = data_pkt
+
 
     elif Type == DATA:
+        if b:
+            if Seq == 2:
+                b = False
+                return
+                # received a DATA pkt
+
         # 顺序接收，最大seq号码加一，整理data加到收集中
         if Seq == receiving_map[from_addr].max_data_pkt_seq + 1:
             receiving_map[from_addr].max_data_pkt_seq += 1
@@ -232,7 +253,8 @@ def process_inbound_udp(sock):
         # 乱序接收，抛弃，ack最大seq号
         else:
             # 乱序data包，ack 需要的包的前一个
-            logger.warning(f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{receiving_map[from_addr].max_data_pkt_seq}')
+            logger.warning(
+                f'乱序到来的包 data {Seq},直接丢弃，并且ack最大号码{receiving_map[from_addr].max_data_pkt_seq}')
             ack_pkt = P2pPacket.ack(receiving_map[from_addr].max_data_pkt_seq)
             logger.info(f'发{from_addr} *ACK   * seq {receiving_map[from_addr].max_data_pkt_seq}')
             sock.sendto(ack_pkt, from_addr)
@@ -278,9 +300,16 @@ def process_inbound_udp(sock):
                 pass
 
     elif Type == ACK:
-        print('')
         ack_num = Ack
+        # 先搞清楚这个ack从那里来的，receiver是谁
+        receiver = sending_map[from_addr]
+        fsm = receiver.fsm
         fsm.update(Event.NewAck)
+        sample_rtt = time.time() - receiver.timers[ack_num]
+        update_rtt(from_addr, sample_rtt)
+        # 查出来现在的窗口
+        # base = receiver.base
+        # next_seq_num = receiver.next_seq_num
 
         # 第零件事，判断一下是否对方已经接收了ack了所有的pkt
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
@@ -289,66 +318,65 @@ def process_inbound_udp(sock):
             sending_map.pop(from_addr)
             logger.warning(f'剩余发送任务为{sending_map}')
             # 关闭所有的定时器
-            start_time = dict()
+            receiver.timers = dict()
             return
 
         # 第一件事，先检查收到的ack是不是在发送窗口内
-        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{base}-{next_seq_num - 1}]({next_seq_num - base})')
+        logger.warning(f'收到了ACK {ack_num}，当前窗口是[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
         # 在窗口内，检查是否是base
-        if ack_num in range(base, next_seq_num):
+        if ack_num in range(receiver.base, receiver.next_seq_num):
             # print('在窗口内')
             # 如果是base，先ack它，再更新窗口
-            if ack_num == base:
+            if ack_num == receiver.base:
                 # 先ack它
-                ack_cnt_map[(from_addr, ack_num)] += 1
-                un_acked_data_pkt_map.pop(from_addr, ack_num)
+                receiver.ack_cnt[ack_num] += 1
+                receiver.un_acked_data_pkt.pop(ack_num)
                 # 关闭这个data包的定时器
-                start_time.pop((from_addr, ack_num))
+                receiver.timers.pop(ack_num)
                 # 更新窗口
-                base += 1
-                next_seq_num = base + fsm.get_cwnd()
+                receiver.base += 1
+                receiver.next_seq_num = receiver.base + fsm.get_cwnd()
                 # 注意(next_seq_num - 1)是窗口最后一个包的seq
                 # 所以 (next_seq_num - 1) * MAX_PAYLOAD 不能大于 CHUNK_DATA_SIZE
-                while (next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
-                    next_seq_num -= 1
-                logger.warning(f'**更新** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num - base})')
-
+                while (receiver.next_seq_num - 1) * MAX_PAYLOAD > CHUNK_DATA_SIZE:
+                    receiver.next_seq_num -= 1
+                logger.warning(f'**更新** 窗口为[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
                 # 更新窗口之后，检查窗口内是否有没有 被发出去的分组
                 # 在窗口里，就是in range(base, next_seq_num)
                 # 没有发出去，就是不在un_acked_data_pkt_map里面
                 # 因为发出去之前会调用before函数，加入到un_acked_data_pkt_map中
-                for i in range(base, next_seq_num):
-                    if (from_addr, i) not in un_acked_data_pkt_map:
+                for i in range(receiver.base, receiver.next_seq_num):
+                    if i not in receiver.un_acked_data_pkt:
                         i_data = get_chunk_data(ex_sending_chunkhash, i)
                         i_pkt = P2pPacket.data(i_data, i)
                         before_send_data(from_addr, i, i_pkt)
                         sock.sendto(i_pkt, from_addr)
                         # 发完之后，处理一下 ack cnt 和 un acked map
-                        ack_cnt_map[(from_addr, i)] = 0
-                        un_acked_data_pkt_map[(from_addr, i)] = i_pkt
+                        receiver.ack_cnt[i] = 0
+                        receiver.un_acked_data_pkt[i] = i_pkt
                         # 记录发送信息
                         logger.warning(f'更新窗口时，发送data {i}')
 
             # 如果不是base，直接抛弃这个ack
             else:
-                logger.warning(f'**抛弃** 窗口为[{base}-{next_seq_num - 1}]({next_seq_num - base})')
+                logger.warning(f'**抛弃** 窗口为[{receiver.base}-{receiver.next_seq_num - 1}]({receiver.next_seq_num - receiver.base})')
 
         # 如果不在窗口里面，先ack它，再检查是否是ack 3次，需要重新传
         else:
             # 先ack它
-            ack_cnt_map[(from_addr, ack_num)] += 1
+            receiver.ack_cnt[ack_num] += 1
             # 再检查是否需要重传
-            if ack_cnt_map[(from_addr, ack_num)] == 3:
+            if receiver.ack_cnt[ack_num] == 3:
                 print('窗口左边收到三个冗余ack，重传整个窗口')
                 fsm.update(Event.Duplicate3Ack)
-                for i in range(base, next_seq_num):
+                for i in range(receiver.base, receiver.next_seq_num):
                     i_data = get_chunk_data(ex_sending_chunkhash, i)
                     i_pkt = P2pPacket.data(i_data, i)
                     before_send_data(from_addr, i, i_pkt)
                     sock.sendto(i_pkt, from_addr)
                     # 发完之后，处理一下 ack cnt 和 un acked map
-                    ack_cnt_map[(from_addr, i)] = 0
-                    un_acked_data_pkt_map[(from_addr, i)] = i_pkt
+                    receiver.ack_cnt[i] = 0
+                    receiver.un_acked_data_pkt[i] = i_pkt
                     # 记录发送信息
                     logger.warning(f'快速重传时，发送data {i}')
             pass
@@ -363,13 +391,13 @@ def process_user_input(sock):
 
 
 def check_timeout(sock):
-    for key, start in start_time.items():
-        addr, seq = key
-        if time.time() - start > timeout_interval_of(addr):
-            fsm.update(Event.Timeout)
-            logger.warning(f"time out retransmission {seq}")
-            before_send_data(addr, seq, un_acked_data_pkt_map[key])
-            sock.sendto(un_acked_data_pkt_map[key], addr)
+    for addr in sending_map.keys():
+        for seq in sending_map[addr].timers.keys():
+            if time.time() - sending_map[addr].timers[seq] > timeout_interval_of(addr):
+                sending_map[addr].fsm.update(Event.Timeout)
+                logger.warning(f"{sending_map[addr].timers[seq]} time out retransmission {seq}")
+                before_send_data(addr, seq, sending_map[addr].un_acked_data_pkt[seq])
+                sock.sendto(sending_map[addr].un_acked_data_pkt[seq], addr)
 
 
 # noinspection PyShadowingNames
@@ -412,7 +440,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', type=int, help='<maxconn>      Max # of concurrent sending')
     parser.add_argument('-i', type=int, help='<identity>     Which peer # am I?')
     parser.add_argument('-v', type=int, help='verbose level', default=0)
-    parser.add_argument('-t', type=int, help="pre-defined timeout", default=1)
+    parser.add_argument('-t', type=int, help="pre-defined timeout", default=5)
     args = parser.parse_args()
 
     config = bt_utils.BtConfig(args)
