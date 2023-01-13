@@ -70,6 +70,8 @@ receiving_hash_set = set()
 #   1.移除该任务
 #   2.判断是否完成所有任务，如果是，清空receiving list，完成下载，生成文件
 
+fsm_records = dict()
+
 
 def before_send_data(addr, seq, packet):
     """
@@ -306,12 +308,13 @@ def process_inbound_udp(sock):
         # 第零件事，判断一下是否对方已经接收了ack了所有的pkt
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             logger.warning(f'{from_addr} ACK了所有pkt，应该结束传输')
+            fsm_records[from_addr] = sending_map[from_addr].fsm
             # 将这个人从sending list中移除
             sending_map.pop(from_addr)
             logger.warning(f'剩余发送任务为{sending_map}')
             # 关闭所有的定时器
             receiver.timers = dict()
-            receiver.fsm.cwnd_visualizer(config.identity)
+            FSM.cwnd_visualizer(config.identity, fsm_records)
             return
 
         if from_addr in sending_map.keys():

@@ -46,8 +46,8 @@ class FSM:
         self.ssthresh = 64
         self.state = State.SlowStart
         self._start_time = time.time()
-        self._times = [0.]
-        self._cwnds = [self.cwnd]
+        self.times = [0.]
+        self.cwnds = [self.cwnd]
 
     def update(self, event):
         trigger = (self.state, event)
@@ -75,15 +75,18 @@ class FSM:
 
     def change_cwnd_to(self, value):
         self.cwnd = value
-        self._times.append(time.time() - self._start_time)
-        self._cwnds.append(value)
-
-    def cwnd_visualizer(self, identity):
-        plt.plot(self._times, self._cwnds, '-')
-        plt.title(f'Peer-{identity} cwnd trend')
-        plt.xlabel('time')
-        plt.ylabel('cwnd')
-        plt.savefig(f'Peer-{identity} cwnd.png')
+        self.times.append(time.time() - self._start_time)
+        self.cwnds.append(value)
 
     def get_cwnd(self):
         return math.floor(self.cwnd)
+
+    @staticmethod
+    def cwnd_visualizer(identity, fsm_records: dict):
+        for addr, fsm in fsm_records.items():
+            plt.plot(fsm.times, fsm.cwnds, label=addr)
+        plt.title(f'Peer-{identity} cwnd trend')
+        plt.xlabel('time')
+        plt.ylabel('cwnd')
+        plt.legend(loc='best')
+        plt.savefig(f'Peer-{identity} cwnd.png')
