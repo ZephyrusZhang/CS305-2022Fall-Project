@@ -50,6 +50,7 @@ def drop_session():
 
     while True:
         if os.path.exists("test/tmp2/download_result.fragment"):
+            time.sleep(2)
             success = True
             break
         elif time.time()-stime>time_max:
