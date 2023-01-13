@@ -412,7 +412,6 @@ def peer_run(config):
 
     try:
         while True:
-            check_timeout(sock)
             ready = select.select([sock, sys.stdin], [], [], 0.1)
             read_ready = ready[0]
             if len(read_ready) > 0:
@@ -422,7 +421,7 @@ def peer_run(config):
                     process_user_input(sock)
             else:
                 # No pkt nor input arrives during this period
-                pass
+                check_timeout(sock)
     except KeyboardInterrupt:
         pass
     finally:
